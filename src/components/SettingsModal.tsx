@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { X, Lock, Unlock, Download, Upload, Database, ShieldCheck } from 'lucide-react';
 import { isPinSet, setPin, clearPin, verifyPin } from '../utils/lock';
 import { exportData, downloadBackup, importLocalBackup } from '../utils/backup';
+import { getBusinessName, setBusinessName } from '../utils/printTicket';
 import type { BackendMode } from '../utils/db';
 
 interface Props {
@@ -16,6 +17,7 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
   const [newPin, setNewPin] = useState('');
   const [currentPin, setCurrentPin] = useState('');
   const [busy, setBusy] = useState(false);
+  const [business, setBusiness] = useState(getBusinessName());
   const fileRef = useRef<HTMLInputElement>(null);
 
   const savePin = async () => {
@@ -80,6 +82,29 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
         </div>
 
         <div className="p-5 space-y-6 overflow-y-auto">
+          {/* Nombre del negocio */}
+          <section>
+            <h4 className="text-xs font-bold uppercase tracking-widest mb-2">Nombre del kiosco</h4>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={business}
+                onChange={(e) => setBusiness(e.target.value)}
+                placeholder="Aparece en el ticket impreso"
+                className="flex-1 bg-white border-2 border-black px-3 py-2 text-sm outline-none"
+              />
+              <button
+                onClick={() => {
+                  setBusinessName(business.trim() || 'KioscoControl');
+                  onToast({ message: 'Nombre guardado', type: 'success' });
+                }}
+                className="px-3 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider border-2 border-black"
+              >
+                Guardar
+              </button>
+            </div>
+          </section>
+
           {/* Backend */}
           <section>
             <h4 className="text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5">

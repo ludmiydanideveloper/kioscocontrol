@@ -13,11 +13,13 @@ import {
   RotateCcw,
   Sparkles,
   AlertTriangle,
+  Printer,
 } from 'lucide-react';
 import { Product, SaleItem, PaymentMethod, Sale, Customer, CashSession } from '../types';
 import { PAYMENT_LABELS } from '../types';
 import { soundFX } from '../utils/audio';
 import { money } from '../utils/format';
+import { printTicket } from '../utils/printTicket';
 import * as db from '../utils/db';
 import confetti from 'canvas-confetti';
 
@@ -360,11 +362,19 @@ export const QuickSalesPOS: React.FC<Props> = ({
               </div>
               <div className="flex items-center space-x-2">
                 <button
+                  onClick={() => printTicket(lastSale)}
+                  className="px-3 py-1.5 bg-[#F2F2EF] hover:bg-white text-black text-xs font-bold uppercase tracking-wider border border-black flex items-center space-x-1"
+                  title="Imprimir ticket (58mm)"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Ticket</span>
+                </button>
+                <button
                   onClick={() => shareReceiptWhatsApp(lastSale)}
                   className="px-3 py-1.5 bg-black hover:bg-neutral-800 text-white text-xs font-bold uppercase tracking-wider border border-black flex items-center space-x-1"
                 >
                   <Share2 className="w-3.5 h-3.5" />
-                  <span>Comprobante</span>
+                  <span>WhatsApp</span>
                 </button>
                 <button onClick={() => setLastSale(null)} className="text-black hover:opacity-70 text-xs p-1 font-bold">
                   ✕
