@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { Camera, X, RefreshCw, Zap, Search, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { soundFX } from '../utils/audio';
+import { cx } from './ui';
 
 interface BarcodeScannerModalProps {
   isOpen: boolean;
@@ -215,142 +216,117 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div id="barcode-scanner-modal" className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-3 sm:p-4">
-      <div className="relative w-full max-w-md bg-white border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] overflow-hidden flex flex-col max-h-[92vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3.5 border-b-2 border-black bg-[#F2F2EF]">
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-black text-white flex items-center justify-center">
-              <Camera className="w-4 h-4" />
-            </div>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-ink/50 backdrop-blur-[2px] p-0 sm:p-4">
+      <div className="relative w-full max-w-md bg-surface border border-line rounded-t-2xl sm:rounded-2xl pop-shadow overflow-hidden flex flex-col max-h-[92vh]">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-ink text-white">
+              <Camera className="h-4 w-4" strokeWidth={2} />
+            </span>
             <div>
-              <h3 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-black">{title}</h3>
-              <p className="text-[11px] font-serif italic text-neutral-600">Apunta la cámara al código de barras</p>
+              <h3 className="text-sm font-semibold">{title}</h3>
+              <p className="text-xs text-muted">Apuntá al código de barras</p>
             </div>
           </div>
           <button
-            id="btn-close-scanner"
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center text-black hover:opacity-60 transition-opacity font-bold"
-            aria-label="Cerrar escáner"
+            className="-mr-1.5 p-1.5 rounded-lg text-muted hover:bg-surface-2 hover:text-ink"
+            aria-label="Cerrar"
           >
-            <X className="w-5 h-5" />
+            <X className="h-[18px] w-[18px]" />
           </button>
         </div>
 
-        {/* Viewfinder Canvas Area */}
         <div className="relative flex-1 bg-black min-h-[260px] max-h-[360px] flex items-center justify-center overflow-hidden">
-          <div id={containerId} className="w-full h-full object-cover"></div>
+          <div id={containerId} className="w-full h-full object-cover" />
 
-          {/* Overlay Targeting Reticle */}
           <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-6">
-            <div className="relative w-64 h-36 border-2 border-dashed border-white rounded-none flex items-center justify-center shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]">
-              {/* Corner markers */}
-              <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-white"></div>
-              <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-white"></div>
-              <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-white"></div>
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-white"></div>
-
-              {/* Scanning red laser line */}
-              <div className="w-full h-0.5 bg-red-500 shadow-[0_0_8px_#ef4444] animate-pulse"></div>
-
+            <div className="relative w-64 h-36 rounded-xl flex items-center justify-center shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]">
+              <div className="absolute -top-px -left-px h-5 w-5 border-t-2 border-l-2 border-white rounded-tl-xl" />
+              <div className="absolute -top-px -right-px h-5 w-5 border-t-2 border-r-2 border-white rounded-tr-xl" />
+              <div className="absolute -bottom-px -left-px h-5 w-5 border-b-2 border-l-2 border-white rounded-bl-xl" />
+              <div className="absolute -bottom-px -right-px h-5 w-5 border-b-2 border-r-2 border-white rounded-br-xl" />
+              <div className="w-full h-0.5 bg-white/70 animate-pulse" />
               {lastScanned && (
-                <div className="absolute bottom-2 px-3 py-1 bg-white border-2 border-black text-black text-xs font-mono font-bold uppercase tracking-wider flex items-center space-x-1 shadow-lg animate-bounce">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>¡Detectado!</span>
+                <div className="absolute bottom-2 flex items-center gap-1 rounded-lg bg-brand px-2.5 py-1 text-xs font-medium text-white">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Detectado
                 </div>
               )}
             </div>
-            <p className="mt-4 text-[10px] text-white font-mono uppercase tracking-wider text-center bg-black px-3 py-1 border border-white/20">
-              Centra el código de barras en el recuadro
-            </p>
           </div>
 
-          {/* Starting indicator */}
           {isStarting && (
-            <div className="absolute inset-0 bg-white/95 flex flex-col items-center justify-center space-y-2 z-10">
-              <RefreshCw className="w-8 h-8 text-black animate-spin" />
-              <p className="text-xs font-serif italic text-neutral-800">Iniciando cámara del dispositivo...</p>
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-surface/95">
+              <div className="h-6 w-6 border-2 border-line-strong border-t-ink rounded-full animate-spin" />
+              <p className="text-[13px] text-muted">Iniciando cámara…</p>
             </div>
           )}
 
-          {/* Camera Error Message */}
           {errorMsg && (
-            <div className="absolute inset-0 bg-white p-6 flex flex-col items-center justify-center text-center z-10">
-              <AlertCircle className="w-10 h-10 text-red-600 mb-2" />
-              <p className="text-xs font-serif italic text-red-700 mb-4">{errorMsg}</p>
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface p-6 text-center">
+              <AlertCircle className="h-8 w-8 text-danger" strokeWidth={1.5} />
+              <p className="text-[13px] text-danger">{errorMsg}</p>
               <button
                 onClick={() => startScanner()}
-                className="px-4 py-2 bg-black hover:bg-neutral-800 text-white text-xs font-bold uppercase tracking-wider border-2 border-black"
+                className="inline-flex h-9 items-center rounded-lg bg-ink px-4 text-sm font-medium text-white hover:bg-ink/90"
               >
-                Reintentar acceso a cámara
+                Reintentar
               </button>
             </div>
           )}
         </div>
 
-        {/* Camera Controls Bar */}
-        <div className="px-4 py-2.5 bg-[#F2F2EF] border-t-2 border-black flex items-center justify-between text-xs text-black">
-          <div className="flex items-center space-x-2">
+        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-t border-line text-[13px]">
+          <div className="flex items-center gap-1.5">
             {cameras.length > 1 && (
               <button
-                id="btn-switch-camera"
                 type="button"
                 onClick={switchCamera}
-                className="flex items-center space-x-1 px-2.5 py-1.5 bg-white hover:bg-black hover:text-white text-black border border-black text-xs font-bold uppercase tracking-wider transition-colors"
-                title="Cambiar entre cámara trasera y delantera"
+                className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 h-8 font-medium text-ink-soft hover:border-line-strong"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Cámara</span>
+                <RefreshCw className="h-3.5 w-3.5" /> Cámara
               </button>
             )}
-
             {hasTorch && (
               <button
-                id="btn-toggle-torch"
                 type="button"
                 onClick={toggleTorch}
-                className={`flex items-center space-x-1 px-2.5 py-1.5 border text-xs font-bold uppercase tracking-wider transition-colors ${
-                  torchOn ? 'bg-black text-white border-black' : 'bg-white text-black border-black hover:bg-black hover:text-white'
-                }`}
+                className={cx(
+                  'inline-flex items-center gap-1 rounded-lg border px-2.5 h-8 font-medium transition-colors',
+                  torchOn ? 'border-ink bg-ink text-white' : 'border-line text-ink-soft hover:border-line-strong',
+                )}
               >
-                <Zap className="w-3.5 h-3.5" />
-                <span>{torchOn ? 'Flash On' : 'Flash'}</span>
+                <Zap className="h-3.5 w-3.5" /> Flash
               </button>
             )}
           </div>
-
-          <label className="flex items-center space-x-2 cursor-pointer select-none text-black">
+          <label className="flex cursor-pointer select-none items-center gap-2 text-ink-soft">
             <input
               type="checkbox"
-              id="chk-continuous-mode"
               checked={continuous}
               onChange={(e) => setContinuous(e.target.checked)}
-              className="accent-black h-3.5 w-3.5 cursor-pointer"
+              className="h-3.5 w-3.5"
             />
-            <span className="text-[11px] font-bold uppercase tracking-wider">Modo continuo</span>
+            Modo continuo
           </label>
         </div>
 
-        {/* Manual Code Input Alternative */}
-        <div className="p-3 bg-white border-t-2 border-black">
+        <div className="p-3 border-t border-line">
           <form onSubmit={handleManualSubmit} className="flex gap-2">
             <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
               <input
-                id="input-manual-barcode"
                 type="text"
                 value={manualCode}
                 onChange={(e) => setManualCode(e.target.value)}
-                placeholder="O escribe el código (ej. 779...)"
-                className="w-full bg-white border-2 border-black pl-9 pr-3 py-2 text-xs text-black placeholder-neutral-400 font-mono outline-none focus:bg-[#FAF9F5]"
+                placeholder="O escribí el código a mano…"
+                className="h-9 w-full rounded-lg border border-line-strong bg-surface pl-9 pr-3 text-sm nums outline-none focus:border-ink/30 focus:ring-2 focus:ring-ink/10"
               />
             </div>
             <button
-              id="btn-submit-manual-barcode"
               type="submit"
               disabled={!manualCode.trim()}
-              className="px-4 py-2 bg-black hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold uppercase tracking-widest text-xs border-2 border-black transition-colors whitespace-nowrap"
+              className="inline-flex h-9 items-center rounded-lg bg-ink px-4 text-sm font-medium text-white hover:bg-ink/90 disabled:opacity-40"
             >
               Agregar
             </button>

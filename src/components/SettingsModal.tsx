@@ -1,9 +1,10 @@
 import React, { useState, useRef } from 'react';
-import { X, Lock, Unlock, Download, Upload, Database, ShieldCheck } from 'lucide-react';
+import { Lock, Unlock, Download, Upload, ShieldCheck, HardDrive } from 'lucide-react';
 import { isPinSet, setPin, clearPin, verifyPin } from '../utils/lock';
 import { exportData, downloadBackup, importLocalBackup } from '../utils/backup';
 import { getBusinessName, setBusinessName } from '../utils/printTicket';
 import type { BackendMode } from '../utils/db';
+import { Modal, Button, Input, Label, cx } from './ui';
 
 interface Props {
   backendMode: BackendMode;
@@ -69,145 +70,117 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
     reader.readAsText(file);
   };
 
-  const field = 'w-full bg-white border-2 border-black px-3 py-2 text-sm font-mono outline-none';
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-md bg-white border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] flex flex-col">
-        <div className="px-5 py-4 border-b-2 border-black bg-[#F2F2EF] flex items-center justify-between">
-          <h3 className="text-sm font-bold uppercase tracking-wider">Configuración</h3>
-          <button onClick={onClose} className="font-bold p-1">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-6 overflow-y-auto">
-          {/* Nombre del negocio */}
-          <section>
-            <h4 className="text-xs font-bold uppercase tracking-widest mb-2">Nombre del kiosco</h4>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={business}
-                onChange={(e) => setBusiness(e.target.value)}
-                placeholder="Aparece en el ticket impreso"
-                className="flex-1 bg-white border-2 border-black px-3 py-2 text-sm outline-none"
-              />
-              <button
-                onClick={() => {
-                  setBusinessName(business.trim() || 'KioscoControl');
-                  onToast({ message: 'Nombre guardado', type: 'success' });
-                }}
-                className="px-3 py-2 bg-black text-white text-xs font-bold uppercase tracking-wider border-2 border-black"
-              >
-                Guardar
-              </button>
-            </div>
-          </section>
-
-          {/* Backend */}
-          <section>
-            <h4 className="text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5">
-              <Database className="w-3.5 h-3.5" /> Almacenamiento
-            </h4>
-            <div
-              className={`p-3 border-2 text-xs ${
-                backendMode === 'supabase'
-                  ? 'border-emerald-600 bg-emerald-50 text-emerald-900'
-                  : 'border-amber-600 bg-amber-50 text-amber-900'
-              }`}
-            >
-              {backendMode === 'supabase' ? (
-                <span className="flex items-center gap-1.5 font-bold">
-                  <ShieldCheck className="w-4 h-4" /> Base central (Supabase) — sincroniza entre dispositivos.
-                </span>
-              ) : (
-                <span className="font-bold">
-                  Modo local — los datos viven en este navegador. Hacé backups seguido.
-                </span>
-              )}
-            </div>
-          </section>
-
-          {/* PIN */}
-          <section>
-            <h4 className="text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5">
-              <Lock className="w-3.5 h-3.5" /> PIN de acceso
-            </h4>
-            {!pinSet ? (
-              <div className="space-y-2">
-                <p className="text-[11px] font-serif italic text-neutral-600">
-                  Pide un PIN al abrir la app. Se guarda sólo en este dispositivo.
-                </p>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  value={newPin}
-                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
-                  placeholder="Nuevo PIN (4 a 8 dígitos)"
-                  className={field}
-                />
-                <button
-                  onClick={savePin}
-                  className="w-full py-2.5 bg-black text-white text-xs font-bold uppercase tracking-widest border-2 border-black"
-                >
-                  Activar PIN
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <p className="text-[11px] font-serif italic text-emerald-700">PIN activo.</p>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  value={currentPin}
-                  onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ''))}
-                  placeholder="PIN actual para desactivar"
-                  className={field}
-                />
-                <button
-                  onClick={removePin}
-                  className="w-full py-2.5 bg-[#F2F2EF] text-black text-xs font-bold uppercase tracking-widest border-2 border-black flex items-center justify-center gap-1.5"
-                >
-                  <Unlock className="w-3.5 h-3.5" /> Desactivar PIN
-                </button>
-              </div>
-            )}
-          </section>
-
-          {/* Backup */}
-          <section>
-            <h4 className="text-xs font-bold uppercase tracking-widest mb-2">Copia de seguridad</h4>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={doExport}
-                disabled={busy}
-                className="py-2.5 bg-black text-white text-xs font-bold uppercase tracking-wider border-2 border-black flex items-center justify-center gap-1.5 disabled:opacity-50"
-              >
-                <Download className="w-3.5 h-3.5" /> Exportar
-              </button>
-              <button
-                onClick={() => fileRef.current?.click()}
-                disabled={backendMode === 'supabase'}
-                className="py-2.5 bg-[#F2F2EF] text-black text-xs font-bold uppercase tracking-wider border-2 border-black flex items-center justify-center gap-1.5 disabled:opacity-40"
-                title={backendMode === 'supabase' ? 'La importación sólo aplica en modo local' : ''}
-              >
-                <Upload className="w-3.5 h-3.5" /> Importar
-              </button>
-            </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={(e) => e.target.files?.[0] && doImport(e.target.files[0])}
+    <Modal title="Configuración" onClose={onClose}>
+      <div className="space-y-6">
+        <section>
+          <Label>Nombre del kiosco</Label>
+          <div className="flex gap-2">
+            <Input
+              value={business}
+              onChange={(e) => setBusiness(e.target.value)}
+              placeholder="Aparece en el ticket impreso"
             />
-            <p className="text-[11px] font-serif italic text-neutral-600 mt-1.5">
-              El archivo incluye productos, ventas y clientes.
-            </p>
-          </section>
-        </div>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setBusinessName(business.trim() || 'KioscoControl');
+                onToast({ message: 'Nombre guardado', type: 'success' });
+              }}
+            >
+              Guardar
+            </Button>
+          </div>
+        </section>
+
+        <section>
+          <Label>Almacenamiento</Label>
+          <div
+            className={cx(
+              'flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[13px]',
+              backendMode === 'supabase'
+                ? 'border-brand/25 bg-brand-soft text-brand'
+                : 'border-warn/25 bg-warn-soft text-warn',
+            )}
+          >
+            {backendMode === 'supabase' ? (
+              <>
+                <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5" strokeWidth={2} />
+                <span>Base central (Supabase). Se sincroniza entre dispositivos.</span>
+              </>
+            ) : (
+              <>
+                <HardDrive className="h-4 w-4 shrink-0 mt-0.5" strokeWidth={2} />
+                <span>Modo local: los datos viven en este navegador. Hacé copias de seguridad seguido.</span>
+              </>
+            )}
+          </div>
+        </section>
+
+        <section>
+          <Label>PIN de acceso</Label>
+          {!pinSet ? (
+            <div className="space-y-2">
+              <p className="text-xs text-muted">Pide un PIN al abrir la app. Se guarda sólo en este dispositivo.</p>
+              <Input
+                type="password"
+                inputMode="numeric"
+                value={newPin}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                placeholder="Nuevo PIN (4 a 8 dígitos)"
+                className="nums"
+              />
+              <Button variant="primary" className="w-full" onClick={savePin}>
+                <Lock className="h-3.5 w-3.5" strokeWidth={2} />
+                Activar PIN
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-brand">PIN activo.</p>
+              <Input
+                type="password"
+                inputMode="numeric"
+                value={currentPin}
+                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ''))}
+                placeholder="PIN actual para desactivar"
+                className="nums"
+              />
+              <Button variant="secondary" className="w-full" onClick={removePin}>
+                <Unlock className="h-3.5 w-3.5" strokeWidth={2} />
+                Desactivar PIN
+              </Button>
+            </div>
+          )}
+        </section>
+
+        <section>
+          <Label>Copia de seguridad</Label>
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="primary" onClick={doExport} disabled={busy}>
+              <Download className="h-3.5 w-3.5" strokeWidth={2} />
+              Exportar
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => fileRef.current?.click()}
+              disabled={backendMode === 'supabase'}
+              title={backendMode === 'supabase' ? 'La importación sólo aplica en modo local' : ''}
+            >
+              <Upload className="h-3.5 w-3.5" strokeWidth={2} />
+              Importar
+            </Button>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && doImport(e.target.files[0])}
+          />
+          <p className="mt-1.5 text-xs text-muted">El archivo incluye productos, ventas y clientes.</p>
+        </section>
       </div>
-    </div>
+    </Modal>
   );
 };

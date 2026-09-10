@@ -1,18 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import {
-  Users,
-  Plus,
-  Search,
-  Edit3,
-  Trash2,
-  DollarSign,
-  X,
-  MessageCircle,
-  History,
-} from 'lucide-react';
+import { Users, Plus, Search, Pencil, Trash2, MessageCircle, History } from 'lucide-react';
 import { Customer, CustomerPayment, CashSession, PaymentMethod } from '../types';
 import { PAYMENT_LABELS } from '../types';
 import { money, dateTime } from '../utils/format';
+import { Card, Button, IconButton, Input, Label, Badge, Stat, Modal, SectionTitle, Empty, cx } from './ui';
 import * as db from '../utils/db';
 
 interface Props {
@@ -65,108 +56,81 @@ export const CustomersView: React.FC<Props> = ({ customers, cashSession, onRefre
   return (
     <div className="space-y-4 pb-24 lg:pb-6">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="bg-white border-2 border-black p-4">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-black/60">Total a cobrar (fiado)</span>
-          <p className="text-2xl sm:text-3xl font-black font-serif italic text-red-700">{money(totalReceivables)}</p>
-        </div>
-        <div className="bg-white border-2 border-black p-4">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-black/60">Clientes con deuda</span>
-          <p className="text-2xl sm:text-3xl font-black font-serif italic">{debtorCount}</p>
-        </div>
-        <div className="bg-white border-2 border-black p-4">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-black/60">Clientes totales</span>
-          <p className="text-2xl sm:text-3xl font-black font-serif italic">{customers.length}</p>
-        </div>
-        <div className="bg-white border-2 border-black p-4 flex items-center justify-center">
+        <Stat label="A cobrar (fiado)" value={money(totalReceivables)} tone="negative" />
+        <Stat label="Clientes con deuda" value={debtorCount} />
+        <Stat label="Clientes totales" value={customers.length} />
+        <Card className="p-0">
           <button
             onClick={() => setEditing({ name: '', phone: '', notes: '', balance: 0 })}
-            className="w-full h-full px-3 py-3 bg-black hover:bg-neutral-800 text-white text-xs font-bold uppercase tracking-widest border-2 border-black flex items-center justify-center gap-2"
+            className="flex h-full w-full items-center justify-center gap-2 rounded-xl p-4 text-sm font-medium text-ink-soft hover:bg-surface-2 hover:text-ink"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="h-4 w-4" strokeWidth={2} />
             Nuevo cliente
           </button>
-        </div>
+        </Card>
       </div>
 
-      <div className="bg-white border-2 border-black p-4">
-        <div className="relative">
-          <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-500" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar cliente..."
-            className="w-full bg-white border-2 border-black pl-10 pr-4 py-2.5 text-sm outline-none focus:bg-[#FAF9F5]"
-          />
-        </div>
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar cliente…"
+          className="h-10 pl-9"
+        />
       </div>
 
-      <div className="bg-white border-2 border-black overflow-hidden">
-        <div className="px-4 py-3 border-b-2 border-black bg-[#F2F2EF] flex items-center justify-between text-xs font-bold uppercase tracking-wider">
-          <span className="flex items-center gap-2">
-            <Users className="w-4 h-4" /> Cuentas corrientes ({filtered.length})
-          </span>
+      <Card className="overflow-hidden p-0">
+        <div className="px-4 py-3 border-b border-line">
+          <SectionTitle icon={Users}>Cuentas corrientes ({filtered.length})</SectionTitle>
         </div>
-        <div className="divide-y divide-black/10">
-          {filtered.length === 0 ? (
-            <div className="p-10 text-center text-neutral-500 font-serif italic text-xs">
-              No hay clientes. Creá uno para vender fiado.
-            </div>
-          ) : (
-            filtered.map((c) => (
-              <div key={c.id} className="p-3.5 sm:px-4 sm:py-3 hover:bg-[#F9F9F7] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {filtered.length === 0 ? (
+          <Empty icon={Users} title="Sin clientes" hint="Creá uno para poder vender fiado." />
+        ) : (
+          <div className="divide-y divide-line">
+            {filtered.map((c) => (
+              <div
+                key={c.id}
+                className="flex flex-col gap-2.5 px-4 py-3 hover:bg-surface-2/50 sm:flex-row sm:items-center sm:justify-between"
+              >
                 <div className="min-w-0">
-                  <h4 className="text-sm font-bold text-black">{c.name}</h4>
-                  <p className="text-[11px] font-mono text-neutral-600">
+                  <h4 className="text-sm font-medium">{c.name}</h4>
+                  <p className="text-xs text-muted">
                     {c.phone || 'sin teléfono'}
                     {c.notes ? ` · ${c.notes}` : ''}
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <span
-                      className={`px-2.5 py-1 border-2 border-black text-xs font-bold font-mono ${
-                        c.balance > 0 ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-800'
-                      }`}
-                    >
-                      {c.balance > 0 ? `Debe ${money(c.balance)}` : c.balance < 0 ? `A favor ${money(-c.balance)}` : 'Al día'}
-                    </span>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <Badge tone={c.balance > 0 ? 'red' : 'green'}>
+                    {c.balance > 0
+                      ? `Debe ${money(c.balance)}`
+                      : c.balance < 0
+                      ? `A favor ${money(-c.balance)}`
+                      : 'Al día'}
+                  </Badge>
                   <div className="flex items-center gap-1">
                     {c.balance > 0 && (
-                      <button
-                        onClick={() => setPayingCustomer(c)}
-                        className="px-2.5 py-1.5 bg-black hover:bg-neutral-800 text-white text-[11px] font-bold uppercase tracking-wider border border-black"
-                      >
+                      <Button size="sm" variant="primary" onClick={() => setPayingCustomer(c)}>
                         Cobrar
-                      </button>
+                      </Button>
                     )}
                     {c.balance > 0 && c.phone && (
-                      <button
-                        onClick={() => remindWhatsApp(c)}
-                        className="p-1.5 border border-black/30 hover:border-black text-emerald-700"
-                        title="Recordar por WhatsApp"
-                      >
-                        <MessageCircle className="w-4 h-4" />
-                      </button>
+                      <IconButton variant="ghost" onClick={() => remindWhatsApp(c)} title="Recordar por WhatsApp">
+                        <MessageCircle className="h-4 w-4" />
+                      </IconButton>
                     )}
-                    <button
-                      onClick={() => setHistoryCustomer(c)}
-                      className="p-1.5 border border-black/30 hover:border-black"
-                      title="Historial de pagos"
-                    >
-                      <History className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setEditing({ ...c })}
-                      className="p-1.5 border border-black/30 hover:border-black"
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </button>
-                    <button
+                    <IconButton variant="ghost" onClick={() => setHistoryCustomer(c)} title="Historial de pagos">
+                      <History className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton variant="ghost" onClick={() => setEditing({ ...c })} title="Editar">
+                      <Pencil className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton
+                      variant="ghost"
+                      className="hover:text-danger"
                       onClick={async () => {
                         if (c.balance !== 0) {
-                          onToast({ message: 'No se puede borrar un cliente con saldo distinto de cero', type: 'warning' });
+                          onToast({ message: 'No se puede borrar un cliente con saldo', type: 'warning' });
                           return;
                         }
                         if (confirm(`¿Eliminar a ${c.name}?`)) {
@@ -174,21 +138,19 @@ export const CustomersView: React.FC<Props> = ({ customers, cashSession, onRefre
                           await onRefresh();
                         }
                       }}
-                      className="p-1.5 border border-black/30 hover:border-red-600 text-neutral-500 hover:text-red-600"
+                      title="Eliminar"
                     >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                      <Trash2 className="h-4 w-4" />
+                    </IconButton>
                   </div>
                 </div>
               </div>
-            ))
-          )}
-        </div>
-      </div>
+            ))}
+          </div>
+        )}
+      </Card>
 
-      {editing && (
-        <CustomerForm customer={editing} onClose={() => setEditing(null)} onSave={saveCustomer} />
-      )}
+      {editing && <CustomerForm customer={editing} onClose={() => setEditing(null)} onSave={saveCustomer} />}
 
       {payingCustomer && (
         <PaymentModal
@@ -217,77 +179,58 @@ const CustomerForm: React.FC<{
   onSave: (c: Partial<Customer>) => void;
 }> = ({ customer, onClose, onSave }) => {
   const [form, setForm] = useState(customer);
-  const field = 'w-full bg-white border-2 border-black px-3 py-2 text-sm outline-none focus:bg-[#FAF9F5]';
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-md bg-white border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-        <div className="px-5 py-4 border-b-2 border-black bg-[#F2F2EF] flex items-center justify-between">
-          <h3 className="text-sm font-bold uppercase tracking-wider">
-            {customer.id ? 'Editar cliente' : 'Nuevo cliente'}
-          </h3>
-          <button onClick={onClose} className="font-bold p-1">
-            <X className="w-5 h-5" />
-          </button>
+    <Modal
+      title={customer.id ? 'Editar cliente' : 'Nuevo cliente'}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button variant="primary" onClick={() => onSave(form)}>
+            Guardar
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div>
+          <Label>Nombre</Label>
+          <Input
+            value={form.name || ''}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            placeholder="Vecino Carlos / Laura Dpto 4"
+          />
         </div>
-        <div className="p-5 space-y-3">
+        <div>
+          <Label>Teléfono (WhatsApp)</Label>
+          <Input
+            value={form.phone || ''}
+            onChange={(e) => setForm({ ...form, phone: e.target.value })}
+            placeholder="549341…"
+          />
+        </div>
+        <div>
+          <Label>Nota</Label>
+          <Input value={form.notes || ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+        </div>
+        {!customer.id && (
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1">Nombre *</label>
-            <input
-              type="text"
-              value={form.name || ''}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className={field}
-              placeholder="Vecino Carlos / Laura Dpto 4"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1">Teléfono (WhatsApp)</label>
-            <input
-              type="text"
-              value={form.phone || ''}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              className={field}
-              placeholder="549341..."
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1">Nota</label>
-            <input
-              type="text"
-              value={form.notes || ''}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              className={field}
-            />
-          </div>
-          {!customer.id && (
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1">Saldo inicial que debe ($)</label>
-              <input
+            <Label>Saldo inicial que debe</Label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">$</span>
+              <Input
                 type="number"
                 value={form.balance ?? 0}
                 onChange={(e) => setForm({ ...form, balance: parseFloat(e.target.value) || 0 })}
-                className={`${field} font-mono font-bold`}
+                className="pl-7 nums"
               />
             </div>
-          )}
-        </div>
-        <div className="px-5 py-4 border-t-2 border-black flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 border border-black text-xs font-bold uppercase tracking-wider hover:bg-[#F2F2EF]"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={() => onSave(form)}
-            className="px-5 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-widest border-2 border-black"
-          >
-            Guardar
-          </button>
-        </div>
+          </div>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 };
 
@@ -302,7 +245,6 @@ const PaymentModal: React.FC<{
   const [method, setMethod] = useState<PaymentMethod>('efectivo');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
-
   const value = parseFloat(amount) || 0;
 
   const save = async () => {
@@ -325,115 +267,83 @@ const PaymentModal: React.FC<{
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-sm bg-white border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-        <div className="px-5 py-4 border-b-2 border-black bg-[#F2F2EF] flex items-center justify-between">
-          <h3 className="text-sm font-bold uppercase tracking-wider">Cobrar a {customer.name}</h3>
-          <button onClick={onClose} className="font-bold p-1">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="p-5 space-y-3">
-          <p className="text-xs font-mono text-neutral-600">
-            Deuda actual: <span className="font-bold text-red-700">{money(customer.balance)}</span>
-          </p>
-          <div className="relative">
-            <DollarSign className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-            <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="w-full bg-white border-2 border-black pl-9 pr-3 py-2 text-sm font-mono font-bold outline-none"
-            />
-          </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            {(['efectivo', 'transferencia', 'debito'] as PaymentMethod[]).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMethod(m)}
-                className={`p-2 border text-[10px] font-bold uppercase tracking-wider ${
-                  method === m ? 'bg-black text-white border-black' : 'bg-[#F2F2EF] border-black'
-                }`}
-              >
-                {PAYMENT_LABELS[m]}
-              </button>
-            ))}
-          </div>
-          {method === 'efectivo' && !cashSession && (
-            <p className="text-[11px] font-serif italic text-amber-700">
-              Caja cerrada: el pago no se sumará al arqueo.
-            </p>
-          )}
-          <input
-            type="text"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="Nota (opcional)"
-            className="w-full bg-white border border-black px-3 py-1.5 text-xs outline-none"
-          />
-          {value > customer.balance && (
-            <p className="text-[11px] font-mono text-neutral-600">
-              Queda a favor del cliente: {money(value - customer.balance)}
-            </p>
-          )}
-        </div>
-        <div className="px-5 py-4 border-t-2 border-black flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 border border-black text-xs font-bold uppercase tracking-wider hover:bg-[#F2F2EF]"
-          >
+    <Modal
+      size="sm"
+      title={`Cobrar a ${customer.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
             Cancelar
-          </button>
-          <button
-            onClick={save}
-            disabled={saving || value <= 0}
-            className="px-5 py-2.5 bg-black text-white text-xs font-bold uppercase tracking-widest border-2 border-black disabled:opacity-50"
-          >
-            {saving ? 'Guardando...' : 'Registrar pago'}
-          </button>
+          </Button>
+          <Button variant="primary" onClick={save} disabled={saving || value <= 0}>
+            {saving ? 'Guardando…' : 'Registrar pago'}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-[13px] text-muted nums">
+          Deuda actual: <span className="font-semibold text-danger">{money(customer.balance)}</span>
+        </p>
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">$</span>
+          <Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="pl-7 nums" />
         </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          {(['efectivo', 'transferencia', 'debito'] as PaymentMethod[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMethod(m)}
+              className={cx(
+                'rounded-lg border px-1 py-2 text-[11px] font-medium transition-colors',
+                method === m ? 'border-ink bg-ink text-white' : 'border-line text-ink-soft hover:border-line-strong',
+              )}
+            >
+              {PAYMENT_LABELS[m]}
+            </button>
+          ))}
+        </div>
+        {method === 'efectivo' && !cashSession && (
+          <p className="text-xs text-warn">Caja cerrada: el pago no entra al arqueo.</p>
+        )}
+        <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Nota (opcional)" />
+        {value > customer.balance && (
+          <p className="text-xs text-muted nums">Queda a favor del cliente: {money(value - customer.balance)}</p>
+        )}
       </div>
-    </div>
+    </Modal>
   );
 };
 
 const PaymentHistoryModal: React.FC<{ customer: Customer; onClose: () => void }> = ({ customer, onClose }) => {
   const [payments, setPayments] = useState<CustomerPayment[] | null>(null);
-
   React.useEffect(() => {
     db.fetchCustomerPayments(customer.id).then(setPayments).catch(() => setPayments([]));
   }, [customer.id]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-md bg-white border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-h-[80vh] flex flex-col">
-        <div className="px-5 py-4 border-b-2 border-black bg-[#F2F2EF] flex items-center justify-between">
-          <h3 className="text-sm font-bold uppercase tracking-wider">Pagos de {customer.name}</h3>
-          <button onClick={onClose} className="font-bold p-1">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="overflow-y-auto divide-y divide-black/10">
-          {!payments ? (
-            <p className="p-6 text-center text-xs font-serif italic text-neutral-500">Cargando...</p>
-          ) : payments.length === 0 ? (
-            <p className="p-6 text-center text-xs font-serif italic text-neutral-500">Sin pagos registrados.</p>
-          ) : (
-            payments.map((p) => (
-              <div key={p.id} className="px-4 py-2.5 flex items-center justify-between text-xs">
-                <div>
-                  <span className="font-mono text-neutral-600">{dateTime(p.createdAt)}</span>
-                  <span className="block text-[11px] text-neutral-500">
-                    {PAYMENT_LABELS[p.method as PaymentMethod] || p.method}
-                    {p.notes ? ` · ${p.notes}` : ''}
-                  </span>
-                </div>
-                <span className="font-mono font-bold text-emerald-700">{money(p.amount)}</span>
+    <Modal title={`Pagos de ${customer.name}`} onClose={onClose}>
+      {!payments ? (
+        <p className="py-6 text-center text-[13px] text-muted">Cargando…</p>
+      ) : payments.length === 0 ? (
+        <p className="py-6 text-center text-[13px] text-muted">Sin pagos registrados.</p>
+      ) : (
+        <div className="divide-y divide-line -my-1">
+          {payments.map((p) => (
+            <div key={p.id} className="flex items-center justify-between py-2.5 text-[13px]">
+              <div>
+                <span className="text-muted nums">{dateTime(p.createdAt)}</span>
+                <span className="block text-xs text-muted">
+                  {PAYMENT_LABELS[p.method as PaymentMethod] || p.method}
+                  {p.notes ? ` · ${p.notes}` : ''}
+                </span>
               </div>
-            ))
-          )}
+              <span className="font-semibold nums text-brand">{money(p.amount)}</span>
+            </div>
+          ))}
         </div>
-      </div>
-    </div>
+      )}
+    </Modal>
   );
 };

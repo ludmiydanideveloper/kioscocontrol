@@ -208,7 +208,7 @@ export default function App() {
   if (locked) return <LockScreen onUnlock={() => setLocked(false)} />;
 
   return (
-    <div className="min-h-screen bg-[#F9F9F7] text-[#1A1A1A] flex flex-col selection:bg-black selection:text-white">
+    <div className="min-h-screen bg-canvas text-ink flex flex-col">
       <HeaderNav
         currentTab={currentTab}
         onTabChange={setCurrentTab}
@@ -227,38 +227,36 @@ export default function App() {
       />
 
       {toast && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 border-2 border-black text-xs font-bold flex items-center space-x-2 max-w-md bg-white text-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px] font-medium text-ink pop-shadow max-w-[calc(100vw-2rem)]">
           <AlertCircle
-            className={`w-4 h-4 flex-shrink-0 ${
+            className={`h-4 w-4 shrink-0 ${
               toast.type === 'warning'
-                ? 'text-amber-600'
+                ? 'text-warn'
                 : toast.type === 'success'
-                ? 'text-emerald-700'
+                ? 'text-brand'
                 : toast.type === 'error'
-                ? 'text-red-600'
-                : 'text-black'
+                ? 'text-danger'
+                : 'text-ink-soft'
             }`}
           />
           <span>{toast.message}</span>
         </div>
       )}
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6">
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-5 sm:py-6">
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center py-20">
-            <div className="w-8 h-8 border-2 border-black border-t-transparent rounded-full animate-spin mb-3" />
-            <p className="text-xs uppercase tracking-widest font-bold opacity-60">
-              Cargando base de datos del kiosco...
-            </p>
+          <div className="flex flex-col items-center justify-center py-24">
+            <div className="h-6 w-6 border-2 border-line-strong border-t-ink rounded-full animate-spin mb-3" />
+            <p className="text-[13px] text-muted">Cargando datos del kiosco…</p>
           </div>
         ) : loadError ? (
-          <div className="max-w-lg mx-auto mt-10 bg-white border-2 border-black p-6 text-center shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
-            <WifiOff className="w-10 h-10 mx-auto mb-3 text-red-600" />
-            <h2 className="text-sm font-bold uppercase tracking-widest mb-2">Sin conexión a la base</h2>
-            <p className="text-xs font-serif italic text-neutral-600 mb-4">{loadError}</p>
+          <div className="max-w-md mx-auto mt-12 bg-surface border border-line rounded-xl card-shadow p-6 text-center">
+            <WifiOff className="h-8 w-8 mx-auto mb-3 text-danger" strokeWidth={1.5} />
+            <h2 className="text-sm font-semibold mb-1.5">Sin conexión a la base</h2>
+            <p className="text-[13px] text-muted mb-4">{loadError}</p>
             <button
               onClick={() => { setIsLoading(true); refreshProducts().finally(() => setIsLoading(false)); }}
-              className="px-4 py-2 bg-black text-white text-xs font-bold uppercase tracking-widest border-2 border-black"
+              className="inline-flex h-9 items-center rounded-lg bg-ink px-4 text-sm font-medium text-white hover:bg-ink/90"
             >
               Reintentar
             </button>
@@ -317,7 +315,7 @@ export default function App() {
               <Suspense
                 fallback={
                   <div className="flex items-center justify-center py-20">
-                    <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                    <div className="h-6 w-6 border-2 border-line-strong border-t-ink rounded-full animate-spin" />
                   </div>
                 }
               >
@@ -352,18 +350,16 @@ export default function App() {
         />
       )}
 
-      <footer className="hidden sm:block border-t-2 border-black bg-[#F2F2EF] py-3 text-center text-[11px] text-[#1A1A1A]/80">
-        <div className="max-w-7xl mx-auto px-4 flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-700" />
-            <span className="font-medium">
-              {backendMode === 'supabase'
-                ? 'KioscoControl · Base central con sincronización en tiempo real'
-                : 'KioscoControl · Modo local (datos en este dispositivo)'}
-            </span>
-          </div>
-          <span className="font-mono">
-            {cashSession ? 'CAJA ABIERTA' : 'CAJA CERRADA'} · {products.length} productos
+      <footer className="hidden sm:block border-t border-line py-3 text-[12px] text-muted">
+        <div className="max-w-6xl mx-auto px-4 flex items-center justify-between">
+          <span className="flex items-center gap-1.5">
+            <ShieldCheck className="h-3.5 w-3.5 text-brand" strokeWidth={2} />
+            {backendMode === 'supabase'
+              ? 'Base central sincronizada'
+              : 'Modo local — datos en este dispositivo'}
+          </span>
+          <span className="nums">
+            {cashSession ? 'Caja abierta' : 'Caja cerrada'} · {products.length} productos
           </span>
         </div>
       </footer>
