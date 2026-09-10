@@ -3,6 +3,8 @@
 Gestor de **inventario y ventas para kioscos**: punto de venta rápido con escáner de
 código de barras, control de stock, cuentas corrientes (fiado), caja/arqueo y reportes.
 
+**En producción:** https://kioscocontrol.vercel.app (PWA — se puede "instalar" en el celular).
+
 Funciona en **dos modos**:
 
 | Modo | Cuándo | Datos |
@@ -90,7 +92,30 @@ almacenamiento del sitio o ejecutá en la consola `localStorage.removeItem('kios
 - Ventas, ganancia neta y margen, ticket promedio, unidades.
 - Valuación de inventario, ganancia potencial, total a cobrar.
 - Ventas por hora/día, por medio de pago, ranking de más vendidos.
+- **Anular venta**: repone stock, revierte fiado y caja.
 - Exportación a CSV e impresión.
+
+### Extras
+- **PWA**: instalable en el celular/tablet, funciona sin conexión.
+- **PIN de acceso** opcional (Configuración → PIN).
+- **Impresión de ticket 58mm** para comandera térmica (botón "Ticket" tras cada venta).
+- **Backup / restore** de datos en JSON (Configuración).
+- Nombre del kiosco configurable (aparece en el ticket).
+
+---
+
+## Deploy (Vercel)
+
+Ya está deployado. Para volver a publicar tras un cambio:
+
+```bash
+npx vercel deploy --prod --yes
+```
+
+Si conectás el repo de GitHub a Vercel, cada `git push` deploya solo.
+Para usar la base central en producción, cargá `VITE_SUPABASE_URL` y
+`VITE_SUPABASE_ANON_KEY` en **Vercel → Project → Settings → Environment Variables**
+y volvé a deployar.
 
 ---
 
