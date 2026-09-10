@@ -1,0 +1,5 @@
+{
+  "name": "KioscoControl - Inventario y Ventas en Tiempo Real",
+  "description": "Sistema de inventario y ventas rápidas para kioscos con escáner de código de barras móvil, alertas de stock bajo, cuentas corrientes, caja/arqueo y reportes.",
+  "requestFramePermissions": ["camera"]
+}
