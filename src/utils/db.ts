@@ -6,13 +6,16 @@
 // ============================================================================
 import { supabase, hasSupabaseConfig } from './supabase';
 import { localStore, seedIfEmpty } from './localStore';
-import { DEMO_PRODUCTS, DEMO_CUSTOMERS } from './demoData';
+import { DEMO_PRODUCTS, DEMO_CUSTOMERS, DEMO_SUPPLIERS, DEMO_SALES } from './demoData';
 import type {
   Product,
   Sale,
   StockMovement,
   Customer,
   CustomerPayment,
+  Supplier,
+  SupplierPayment,
+  Expense,
   CashSession,
   CashMovement,
   Purchase,
@@ -24,29 +27,77 @@ let mode: BackendMode = 'local';
 export const getBackendMode = (): BackendMode => mode;
 export const isRealtimeAvailable = (): boolean => mode === 'supabase';
 
+/** ¿Hay datos guardados en el store local de este navegador? */
+export function hasLocalData(): boolean {
+  try {
+    const raw = localStorage.getItem('kioscocontrol:v1');
+    if (!raw) return false;
+    const db = JSON.parse(raw);
+    return (db.products?.length || 0) > 0 || (db.sales?.length || 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sube todo lo que haya en el store local a Supabase (para cuando se trabajó
+ * offline y después se configuró la base central). Requiere modo 'supabase'.
+ */
+export async function migrateLocalToSupabase(): Promise<Record<string, number>> {
+  if (mode !== 'supabase') throw new Error('La base central no está activa');
+  const raw = localStorage.getItem('kioscocontrol:v1');
+  if (!raw) throw new Error('No hay datos locales para subir');
+  const local = JSON.parse(raw) as Record<string, any[]>;
+  const counts: Record<string, number> = {};
+
+  // Orden respetando las claves foráneas.
+  const steps: [string, any[] | undefined, 'upsert' | 'insert'][] = [
+    ['products', local.products, 'upsert'],
+    ['customers', local.customers, 'upsert'],
+    ['suppliers', local.suppliers, 'upsert'],
+    ['cash_sessions', local.cash_sessions, 'upsert'],
+    ['sales', local.sales, 'upsert'],
+    ['stock_movements', local.stock_movements, 'upsert'],
+    ['cash_movements', local.cash_movements, 'upsert'],
+    ['customer_payments', local.customer_payments, 'upsert'],
+    ['supplier_payments', local.supplier_payments, 'upsert'],
+    ['expenses', local.expenses, 'upsert'],
+    ['purchases', local.purchases, 'upsert'],
+  ];
+
+  for (const [table, rows] of steps) {
+    if (!rows || rows.length === 0) continue;
+    const { error } = await supabase.from(table).upsert(rows, { onConflict: 'id' });
+    if (error) throw new Error(`${table}: ${error.message}`);
+    counts[table] = rows.length;
+  }
+  return counts;
+}
+
 /** Health check al arrancar. Devuelve el modo elegido. */
 export async function initBackend(): Promise<BackendMode> {
   if (hasSupabaseConfig) {
     try {
       // Verifica el schema NUEVO (no sólo que exista `products`).
-      const [prod, cash] = await Promise.all([
+      const [prod, cash, exp] = await Promise.all([
         supabase.from('products').select('isActive').limit(1),
         supabase.from('cash_sessions').select('id').limit(1),
+        supabase.from('expenses').select('id').limit(1),
       ]);
-      if (!prod.error && !cash.error) {
+      if (!prod.error && !cash.error && !exp.error) {
         mode = 'supabase';
         return mode;
       }
       console.warn(
-        'Falta aplicar schema.sql en Supabase — usando modo local. Detalle:',
-        prod.error?.message || cash.error?.message,
+        'Falta aplicar la última versión de schema.sql en Supabase — usando modo local. Detalle:',
+        prod.error?.message || cash.error?.message || exp.error?.message,
       );
     } catch (err) {
       console.warn('Supabase inaccesible, usando modo local:', err);
     }
   }
   mode = 'local';
-  seedIfEmpty(DEMO_PRODUCTS, DEMO_CUSTOMERS);
+  seedIfEmpty(DEMO_PRODUCTS, DEMO_CUSTOMERS, DEMO_SUPPLIERS, DEMO_SALES);
   return mode;
 }
 
@@ -199,6 +250,88 @@ const supa = {
     if (error) throw new Error(error.message || 'No se pudo registrar el pago');
   },
 
+  // ----- Proveedores -----
+  async fetchSuppliers(): Promise<Supplier[]> {
+    const { data, error } = await supabase.from('suppliers').select('*').order('name');
+    if (error) throw new Error(error.message);
+    return (data || []) as Supplier[];
+  },
+
+  async saveSupplier(supplier: Partial<Supplier>): Promise<Supplier> {
+    const payload = {
+      ...supplier,
+      id: supplier.id || `sup-${Date.now()}`,
+      updatedAt: new Date().toISOString(),
+    };
+    const { data, error } = await supabase.from('suppliers').upsert(payload).select().single();
+    if (error) throw new Error(error.message || 'Error guardando proveedor');
+    return data as Supplier;
+  },
+
+  async deleteSupplier(id: string): Promise<void> {
+    const { error } = await supabase.from('suppliers').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+  },
+
+  async fetchSupplierPayments(supplierId: string): Promise<SupplierPayment[]> {
+    const { data, error } = await supabase
+      .from('supplier_payments')
+      .select('*')
+      .eq('supplierId', supplierId)
+      .order('createdAt', { ascending: false });
+    if (error) throw new Error(error.message);
+    return (data || []) as SupplierPayment[];
+  },
+
+  async registerSupplierPayment(
+    supplierId: string,
+    amount: number,
+    method: string,
+    notes: string,
+    cashSessionId: string | null,
+  ): Promise<void> {
+    const { error } = await supabase.rpc('register_supplier_payment', {
+      p_supplier_id: supplierId,
+      p_amount: amount,
+      p_method: method,
+      p_notes: notes,
+      p_cash_session: cashSessionId,
+    });
+    if (error) throw new Error(error.message || 'No se pudo registrar el pago');
+  },
+
+  // ----- Gastos -----
+  async fetchExpenses(fromISO?: string, toISO?: string): Promise<Expense[]> {
+    let q = supabase.from('expenses').select('*').order('date', { ascending: false });
+    if (fromISO) q = q.gte('date', fromISO);
+    if (toISO) q = q.lte('date', toISO);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return (data || []) as Expense[];
+  },
+
+  async registerExpense(
+    category: string,
+    description: string,
+    amount: number,
+    method: string,
+    cashSessionId: string | null,
+  ): Promise<void> {
+    const { error } = await supabase.rpc('register_expense', {
+      p_category: category,
+      p_description: description,
+      p_amount: amount,
+      p_method: method,
+      p_cash_session: cashSessionId,
+    });
+    if (error) throw new Error(error.message || 'No se pudo registrar el gasto');
+  },
+
+  async deleteExpense(id: string): Promise<void> {
+    const { error } = await supabase.from('expenses').delete().eq('id', id);
+    if (error) throw new Error(error.message);
+  },
+
   async fetchOpenCashSession(): Promise<CashSession | null> {
     const { data, error } = await supabase
       .from('cash_sessions')
@@ -305,6 +438,28 @@ export const registerCustomerPayment = (
   notes: string,
   cashSessionId: string | null,
 ) => pick().registerCustomerPayment(id, amount, method, notes, cashSessionId);
+
+export const fetchSuppliers = () => pick().fetchSuppliers();
+export const saveSupplier = (s: Partial<Supplier>) => pick().saveSupplier(s);
+export const deleteSupplier = (id: string) => pick().deleteSupplier(id);
+export const fetchSupplierPayments = (id: string) => pick().fetchSupplierPayments(id);
+export const registerSupplierPayment = (
+  id: string,
+  amount: number,
+  method: string,
+  notes: string,
+  cashSessionId: string | null,
+) => pick().registerSupplierPayment(id, amount, method, notes, cashSessionId);
+
+export const fetchExpenses = (from?: string, to?: string) => pick().fetchExpenses(from, to);
+export const registerExpense = (
+  category: string,
+  description: string,
+  amount: number,
+  method: string,
+  cashSessionId: string | null,
+) => pick().registerExpense(category, description, amount, method, cashSessionId);
+export const deleteExpense = (id: string) => pick().deleteExpense(id);
 
 export const fetchOpenCashSession = () => pick().fetchOpenCashSession();
 export const fetchCashSessions = (limit?: number) => pick().fetchCashSessions(limit);

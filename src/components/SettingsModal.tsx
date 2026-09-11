@@ -3,6 +3,7 @@ import { Lock, Unlock, Download, Upload, ShieldCheck, HardDrive } from 'lucide-r
 import { isPinSet, setPin, clearPin, verifyPin } from '../utils/lock';
 import { exportData, downloadBackup, importLocalBackup } from '../utils/backup';
 import { getBusinessName, setBusinessName } from '../utils/printTicket';
+import { hasLocalData, migrateLocalToSupabase } from '../utils/db';
 import type { BackendMode } from '../utils/db';
 import { Modal, Button, Input, Label, cx } from './ui';
 
@@ -18,8 +19,25 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
   const [newPin, setNewPin] = useState('');
   const [currentPin, setCurrentPin] = useState('');
   const [busy, setBusy] = useState(false);
+  const [migrating, setMigrating] = useState(false);
   const [business, setBusiness] = useState(getBusinessName());
   const fileRef = useRef<HTMLInputElement>(null);
+  const canMigrate = backendMode === 'supabase' && hasLocalData();
+
+  const doMigrate = async () => {
+    if (!confirm('¿Subir los datos guardados en este navegador a la base central? Se agregan/actualizan; no se borra nada.')) return;
+    try {
+      setMigrating(true);
+      const counts = await migrateLocalToSupabase();
+      const total = Object.values(counts).reduce((a, b) => a + b, 0);
+      onToast({ message: `${total} registros subidos a la base central`, type: 'success' });
+      onDataRestored();
+    } catch (err: any) {
+      onToast({ message: err.message || 'No se pudo subir', type: 'error' }, 6000);
+    } finally {
+      setMigrating(false);
+    }
+  };
 
   const savePin = async () => {
     if (!/^\d{4,8}$/.test(newPin)) {
@@ -115,6 +133,16 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
               </>
             )}
           </div>
+          {canMigrate && (
+            <div className="mt-2">
+              <Button variant="secondary" className="w-full" onClick={doMigrate} disabled={migrating}>
+                {migrating ? 'Subiendo…' : 'Subir datos locales a la base central'}
+              </Button>
+              <p className="mt-1.5 text-xs text-muted">
+                Detectamos datos guardados en este navegador. Subilos una vez para no perderlos.
+              </p>
+            </div>
+          )}
         </section>
 
         <section>

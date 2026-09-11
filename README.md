@@ -64,34 +64,43 @@ almacenamiento del sitio o ejecutá en la consola `localStorage.removeItem('kios
 - Escaneo con cámara del celular o lector USB/Bluetooth → agrega al carrito.
 - Búsqueda por nombre o código; botones de acceso rápido.
 - Control de stock: no deja vender más de lo que hay.
+- **Venta por peso** (productos por kg: se piden los gramos) y **monto libre**
+  (cigarrillo suelto, algo sin código).
 - Medios de pago: efectivo (con cálculo de vuelto y billetes), transferencia/QR,
   débito, crédito y **fiado** (asociado a un cliente).
-- Descuento por ticket. Comprobante por WhatsApp.
+- Descuento por ticket. Comprobante por WhatsApp o ticket 58mm.
 
 ### Inventario
 - Alta/edición/baja de productos (baja lógica: no rompe el histórico).
 - Categoría, marca, proveedor, costo, venta, margen calculado, stock y alerta mínima.
-- **Compra a proveedor**: ingresa stock y actualiza el costo en un solo paso.
+- Producto por unidad o **por peso (kg)**.
+- **Compra a proveedor**: ingresa stock, actualiza el costo y, si queda en cuenta,
+  suma a la deuda con ese proveedor.
+- **Actualización de precios por %** (para inflación), por categoría o a todo.
 - **Movimientos de stock**: historial auditable (venta, compra, ajuste, alta…).
 
 ### Alertas de stock
 - Productos en o bajo el mínimo. Reposición rápida (+5 / +10 / +24 / personalizado).
 - Generación de pedido a proveedor al portapapeles.
 
-### Fiado / Cuentas corrientes
+### Fiado / Cuentas corrientes (clientes)
 - Saldo por cliente, registro de pagos (parciales o totales), historial.
 - Recordatorio de deuda por WhatsApp.
 
+### Proveedores
+- Cuánto le debés a cada proveedor, pagos con historial, compras asociadas.
+
 ### Caja
 - Apertura con fondo inicial. Ingresos y retiros manuales.
-- Suma automática de ventas en efectivo y pagos de fiado.
+- Suma automática de ventas en efectivo, pagos de fiado, gastos y pagos a proveedores.
 - Cierre con arqueo: efectivo esperado vs. contado y diferencia. Historial de cierres.
 
 ### Reportes
 - Rango: hoy / ayer / 7 días / mes / personalizado.
-- Ventas, ganancia neta y margen, ticket promedio, unidades.
-- Valuación de inventario, ganancia potencial, total a cobrar.
+- Ventas, ganancia bruta, **gastos** y **ganancia neta real** (bruta − gastos).
+- Ticket promedio, valuación de inventario, total a cobrar y total a pagar.
 - Ventas por hora/día, por medio de pago, ranking de más vendidos.
+- **Gastos del kiosco** (alquiler, luz, sueldos…) con alta y borrado desde acá.
 - **Anular venta**: repone stock, revierte fiado y caja.
 - Exportación a CSV e impresión.
 
@@ -99,7 +108,8 @@ almacenamiento del sitio o ejecutá en la consola `localStorage.removeItem('kios
 - **PWA**: instalable en el celular/tablet, funciona sin conexión.
 - **PIN de acceso** opcional (Configuración → PIN).
 - **Impresión de ticket 58mm** para comandera térmica (botón "Ticket" tras cada venta).
-- **Backup / restore** de datos en JSON (Configuración).
+- **Backup / restore** de datos en JSON, y **subida del store local a la base central**
+  (Configuración) para cuando se trabajó offline.
 - Nombre del kiosco configurable (aparece en el ticket).
 
 ---
@@ -127,6 +137,8 @@ y volvé a deployar.
 | `npm run build` | Build de producción a `dist/` |
 | `npm run preview` | Sirve el build |
 | `npm run lint` | Chequeo de tipos (`tsc --noEmit`) |
+| `npm test` | Tests (Vitest) de la lógica de datos |
+| `npm run gen-icons` | Regenera los iconos PWA desde el SVG |
 | `node seed.js` | Carga datos demo en Supabase |
 
 ## Stack
@@ -141,20 +153,24 @@ src/
   App.tsx                 orquestador, tabs, escáner, realtime
   types.ts                modelos de dominio
   components/
+    ui.tsx                 sistema de diseño (Card, Button, Modal, Stat…)
     HeaderNav.tsx          navegación + estado de conexión
-    QuickSalesPOS.tsx       punto de venta
-    InventoryManager.tsx    inventario + compras + movimientos
-    LowStockAlerts.tsx      alertas y reposición
-    CustomersView.tsx       fiado / cuentas corrientes
-    CashRegister.tsx        caja y arqueo
-    ReportsView.tsx         métricas y gráficos
-    BarcodeScannerModal.tsx escáner de cámara
+    QuickSalesPOS.tsx      punto de venta (unidad, peso, monto libre, fiado)
+    InventoryManager.tsx   inventario + compras + movimientos + precios %
+    LowStockAlerts.tsx     alertas y reposición
+    CustomersView.tsx      fiado / cuentas corrientes de clientes
+    SuppliersView.tsx      cuentas corrientes con proveedores
+    CashRegister.tsx       caja y arqueo
+    ReportsView.tsx        métricas, gráficos y gastos
+    BarcodeScannerModal.tsx  escáner de cámara
+    LockScreen / SettingsModal
   utils/
-    db.ts                 facade: elige backend (supabase | local)
-    localStore.ts          backend localStorage
-    supabase.ts            cliente Supabase
-    demoData.ts            catálogo de demo
-    format.ts / dateRange.ts  helpers
-schema.sql                esquema + funciones RPC de Supabase
-seed.js                   carga de datos demo
+    db.ts                 facade: elige backend (supabase | local) + migración
+    localStore.ts         backend localStorage
+    supabase.ts           cliente Supabase
+    demoData.ts           catálogo, clientes, proveedores y ventas de demo
+    format.ts / dateRange.ts / lock.ts / backup.ts / printTicket.ts
+    *.test.ts             tests de la lógica de datos (Vitest)
+schema.sql               esquema + funciones RPC de Supabase (idempotente)
+seed.js                  carga demo en Supabase (con 30 días de ventas)
 ```

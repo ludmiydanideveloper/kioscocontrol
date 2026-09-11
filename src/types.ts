@@ -27,6 +27,9 @@ export const CATEGORIES: Category[] = [
   'Varios',
 ];
 
+/** 'unit' = precio por unidad · 'kg' = precio por kilo (se vende por peso). */
+export type PriceUnit = 'unit' | 'kg';
+
 export interface Product {
   id: string;
   barcode: string;
@@ -39,6 +42,7 @@ export interface Product {
   stock: number;
   minStock: number;
   unit?: string;
+  priceUnit?: PriceUnit;
   imageUrl?: string;
   isActive?: boolean;
   createdAt?: string;
@@ -126,6 +130,56 @@ export interface CustomerPayment {
 }
 
 // ----------------------------------------------------------------------------
+// Proveedores / cuenta corriente
+// ----------------------------------------------------------------------------
+
+export interface Supplier {
+  id: string;
+  name: string;
+  phone?: string | null;
+  notes?: string | null;
+  balance: number; // positivo = le debo al proveedor
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface SupplierPayment {
+  id: string;
+  supplierId: string;
+  amount: number;
+  method: PaymentMethod;
+  notes?: string | null;
+  createdAt: string;
+}
+
+// ----------------------------------------------------------------------------
+// Gastos del kiosco
+// ----------------------------------------------------------------------------
+
+export const EXPENSE_CATEGORIES = [
+  'Alquiler',
+  'Servicios',
+  'Sueldos',
+  'Mercadería',
+  'Impuestos',
+  'Fletes',
+  'Mantenimiento',
+  'General',
+] as const;
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+
+export interface Expense {
+  id: string;
+  date: string;
+  category: string;
+  description?: string | null;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  cashSessionId?: string | null;
+  createdAt?: string;
+}
+
+// ----------------------------------------------------------------------------
 // Caja / Arqueo
 // ----------------------------------------------------------------------------
 
@@ -134,7 +188,9 @@ export type CashMovementType =
   | 'ingreso'
   | 'retiro'
   | 'venta_efectivo'
-  | 'pago_fiado';
+  | 'pago_fiado'
+  | 'gasto'
+  | 'pago_proveedor';
 
 export interface CashSession {
   id: string;
@@ -173,8 +229,10 @@ export interface Purchase {
   id: string;
   timestamp: string;
   supplier?: string | null;
+  supplierId?: string | null;
   items: PurchaseItem[];
   total: number;
+  paid?: boolean;
   notes?: string | null;
 }
 
@@ -187,7 +245,9 @@ export type DateRangePreset = 'today' | 'yesterday' | 'week' | 'month' | 'custom
 export interface ReportSummary {
   rangeLabel: string;
   totalSales: number;
-  totalProfit: number;
+  totalProfit: number; // ganancia bruta (venta - costo de mercadería)
+  totalExpenses: number;
+  netProfit: number; // ganancia bruta - gastos del período
   salesCount: number;
   averageTicket: number;
   itemsSold: number;
@@ -197,6 +257,8 @@ export interface ReportSummary {
   lowStockCount: number;
   outOfStockCount: number;
   totalReceivables: number; // total fiado pendiente
+  totalPayables: number; // total que se debe a proveedores
+  expensesByCategory: { category: string; total: number }[];
   topSellingProducts: {
     name: string;
     quantity: number;

@@ -12,7 +12,7 @@ import {
   Package,
   Percent,
 } from 'lucide-react';
-import { Product, StockMovement, PurchaseItem } from '../types';
+import { Product, StockMovement, PurchaseItem, Supplier } from '../types';
 import { CATEGORIES } from '../types';
 import { money, marginPct, dateTime } from '../utils/format';
 import { Card, Button, IconButton, Input, Select, Label, Badge, Stat, Modal, SectionTitle, Empty, cx } from './ui';
@@ -20,6 +20,7 @@ import * as db from '../utils/db';
 
 interface Props {
   products: Product[];
+  suppliers: Supplier[];
   onSaveProduct: (product: Partial<Product>) => Promise<void>;
   onDeleteProduct: (id: string) => Promise<void>;
   onAdjustStock: (productId: string, amount: number, reason: string) => Promise<void>;
@@ -39,6 +40,7 @@ const MOVEMENT_LABELS: Record<string, string> = {
 
 export const InventoryManager: React.FC<Props> = ({
   products,
+  suppliers,
   onSaveProduct,
   onDeleteProduct,
   onAdjustStock,
@@ -294,6 +296,7 @@ export const InventoryManager: React.FC<Props> = ({
       {isPurchaseOpen && (
         <PurchaseModal
           products={products}
+          suppliers={suppliers}
           onClose={() => setIsPurchaseOpen(false)}
           onDone={async () => {
             setIsPurchaseOpen(false);
@@ -417,19 +420,34 @@ const ProductForm: React.FC<{
           </div>
         </div>
 
-        <div>
-          <Label>Proveedor</Label>
-          <Input
-            value={product.supplier || ''}
-            onChange={(e) => set({ supplier: e.target.value })}
-            placeholder="Distribuidora / mayorista"
-          />
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Proveedor</Label>
+            <Input
+              value={product.supplier || ''}
+              onChange={(e) => set({ supplier: e.target.value })}
+              placeholder="Distribuidora"
+            />
+          </div>
+          <div>
+            <Label>Se vende</Label>
+            <Select
+              value={product.priceUnit || 'unit'}
+              onChange={(e) => set({ priceUnit: e.target.value as Product['priceUnit'] })}
+            >
+              <option value="unit">Por unidad</option>
+              <option value="kg">Por peso (kg)</option>
+            </Select>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           {(['costPrice', 'sellPrice'] as const).map((key) => (
             <div key={key}>
-              <Label>{key === 'costPrice' ? 'Precio costo' : 'Precio venta'}</Label>
+              <Label>
+                {key === 'costPrice' ? 'Precio costo' : 'Precio venta'}
+                {product.priceUnit === 'kg' ? ' / kg' : ''}
+              </Label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">$</span>
                 <Input
@@ -455,12 +473,13 @@ const ProductForm: React.FC<{
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>Stock actual</Label>
+            <Label>Stock actual {product.priceUnit === 'kg' ? '(kg)' : ''}</Label>
             <Input
               type="number"
               min="0"
+              step="any"
               value={product.stock ?? 0}
-              onChange={(e) => set({ stock: parseInt(e.target.value, 10) || 0 })}
+              onChange={(e) => set({ stock: parseFloat(e.target.value) || 0 })}
               className="nums"
             />
           </div>
@@ -469,8 +488,9 @@ const ProductForm: React.FC<{
             <Input
               type="number"
               min="0"
+              step="any"
               value={product.minStock ?? 5}
-              onChange={(e) => set({ minStock: parseInt(e.target.value, 10) || 0 })}
+              onChange={(e) => set({ minStock: parseFloat(e.target.value) || 0 })}
               className="nums"
             />
           </div>
@@ -485,15 +505,18 @@ const ProductForm: React.FC<{
 // ---------------------------------------------------------------------------
 const PurchaseModal: React.FC<{
   products: Product[];
+  suppliers: Supplier[];
   onClose: () => void;
   onDone: () => Promise<void>;
   onError: (m: string) => void;
-}> = ({ products, onClose, onDone, onError }) => {
-  const [supplier, setSupplier] = useState('');
+}> = ({ products, suppliers, onClose, onDone, onError }) => {
+  const [supplierId, setSupplierId] = useState('');
   const [notes, setNotes] = useState('');
+  const [paid, setPaid] = useState(true);
   const [rows, setRows] = useState<PurchaseItem[]>([]);
   const [search, setSearch] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const supplierName = suppliers.find((s) => s.id === supplierId)?.name || null;
 
   const results = search.trim()
     ? products
@@ -527,9 +550,20 @@ const PurchaseModal: React.FC<{
 
   const save = async () => {
     if (rows.length === 0) return;
+    if (!paid && !supplierId) {
+      onError('Elegí un proveedor para dejar la compra en cuenta corriente');
+      return;
+    }
     try {
       setIsSaving(true);
-      await db.registerPurchase({ supplier: supplier || null, items: rows, total, notes: notes || null });
+      await db.registerPurchase({
+        supplier: supplierName,
+        supplierId: supplierId || null,
+        items: rows,
+        total,
+        paid,
+        notes: notes || null,
+      });
       await onDone();
     } catch (err: any) {
       onError(err.message || 'No se pudo registrar la compra');
@@ -556,11 +590,26 @@ const PurchaseModal: React.FC<{
       }
     >
       <div className="space-y-3">
-        <Input
-          value={supplier}
-          onChange={(e) => setSupplier(e.target.value)}
-          placeholder="Proveedor / distribuidora"
-        />
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Proveedor</Label>
+            <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+              <option value="">Sin especificar</option>
+              {suppliers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label>Pago</Label>
+            <Select value={paid ? 'paid' : 'account'} onChange={(e) => setPaid(e.target.value === 'paid')}>
+              <option value="paid">Pagada</option>
+              <option value="account">En cuenta corriente</option>
+            </Select>
+          </div>
+        </div>
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
           <Input

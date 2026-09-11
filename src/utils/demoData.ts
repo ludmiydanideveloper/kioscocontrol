@@ -1,4 +1,4 @@
-import type { Product, Customer } from '../types';
+import type { Product, Customer, Supplier, Sale } from '../types';
 
 const now = new Date().toISOString();
 
@@ -42,14 +42,81 @@ export const DEMO_PRODUCTS: Product[] = RAW.map(
     stock,
     minStock,
     unit: 'unidad',
+    priceUnit: 'unit',
     isActive: true,
     createdAt: now,
     updatedAt: now,
   }),
 );
 
+// Un producto que se vende por peso, para mostrar la venta fraccionada.
+DEMO_PRODUCTS.push({
+  id: 'prod-demo-fiambre',
+  barcode: '2000000000019',
+  name: 'Queso cremoso (por kg)',
+  category: 'Almacén',
+  brand: 'La Paulina',
+  supplier: 'Distribuidora Demo',
+  costPrice: 6800,
+  sellPrice: 11000,
+  stock: 3.5,
+  minStock: 1,
+  unit: 'kg',
+  priceUnit: 'kg',
+  isActive: true,
+  createdAt: now,
+  updatedAt: now,
+});
+
 export const DEMO_CUSTOMERS: Customer[] = [
   { id: 'cust-demo-1', name: 'Vecino Carlos', phone: '5493410000001', notes: 'Depto 3B', balance: 4500, createdAt: now },
   { id: 'cust-demo-2', name: 'Laura (kiosco esquina)', phone: '5493410000002', notes: null, balance: 0, createdAt: now },
   { id: 'cust-demo-3', name: 'Don José', phone: null, notes: 'Jubilado, paga los 3', balance: 12000, createdAt: now },
 ];
+
+export const DEMO_SUPPLIERS: Supplier[] = [
+  { id: 'sup-demo-1', name: 'Distribuidora Norte', phone: '5493410010001', notes: null, balance: 45000, createdAt: now },
+  { id: 'sup-demo-2', name: 'Mayorista El Ahorro', phone: null, notes: 'reparte los martes', balance: 0, createdAt: now },
+];
+
+/** ~12 ventas repartidas en los últimos 8 días, para que Reportes tenga datos. */
+export const DEMO_SALES: Sale[] = (() => {
+  const out: Sale[] = [];
+  let n = 0;
+  for (let d = 8; d >= 1; d--) {
+    const tickets = 1 + (d % 3);
+    for (let t = 0; t < tickets; t++) {
+      const ts = new Date(Date.now() - d * 86400000);
+      ts.setHours(9 + ((n * 3) % 11), (n * 17) % 60, 0);
+      const picks = [DEMO_PRODUCTS[n % 10], DEMO_PRODUCTS[(n + 4) % 10]];
+      const items = picks.map((p, k) => {
+        const quantity = 1 + ((n + k) % 2);
+        return {
+          productId: p.id,
+          barcode: p.barcode,
+          name: p.name,
+          quantity,
+          unitPrice: p.sellPrice,
+          costPrice: p.costPrice,
+          subtotal: quantity * p.sellPrice,
+        };
+      });
+      const subtotal = items.reduce((a, i) => a + i.subtotal, 0);
+      const totalCost = items.reduce((a, i) => a + i.costPrice * i.quantity, 0);
+      out.push({
+        id: `sale-demo-${d}-${t}`,
+        timestamp: ts.toISOString(),
+        items,
+        subtotal,
+        discount: 0,
+        total: subtotal,
+        totalCost,
+        profit: subtotal - totalCost,
+        paymentMethod: (['efectivo', 'efectivo', 'transferencia', 'debito'] as const)[n % 4],
+        status: 'completed',
+      });
+      n++;
+    }
+  }
+  return out;
+})();

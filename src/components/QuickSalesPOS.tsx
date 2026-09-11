@@ -20,7 +20,7 @@ import { PAYMENT_LABELS } from '../types';
 import { soundFX } from '../utils/audio';
 import { money } from '../utils/format';
 import { printTicket } from '../utils/printTicket';
-import { cx, Card, Button, Input, Select, Badge, Empty } from './ui';
+import { cx, Card, Button, Input, Select, Badge, Empty, Modal, Label } from './ui';
 import * as db from '../utils/db';
 import confetti from 'canvas-confetti';
 
@@ -64,12 +64,16 @@ export const QuickSalesPOS: React.FC<Props> = ({
   const [saleNotes, setSaleNotes] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastSale, setLastSale] = useState<Sale | null>(null);
+  const [weightProduct, setWeightProduct] = useState<Product | null>(null);
 
   const productById = useMemo(() => {
     const m = new Map<string, Product>();
     products.forEach((p) => m.set(p.id, p));
     return m;
   }, [products]);
+
+  const isWeightItem = (productId: string) => productById.get(productId)?.priceUnit === 'kg';
+  const fmtQty = (q: number) => (Number.isInteger(q) ? String(q) : q.toFixed(3));
 
   const quickProducts = useMemo(
     () => [...products].sort((a, b) => b.stock - a.stock).slice(0, 8),
@@ -79,12 +83,20 @@ export const QuickSalesPOS: React.FC<Props> = ({
   const cartSubtotal = cart.reduce((acc, i) => acc + i.subtotal, 0);
   const discountValue = Math.min(cartSubtotal, Math.max(0, parseFloat(discount) || 0));
   const cartTotal = cartSubtotal - discountValue;
-  const cartItemCount = cart.reduce((acc, i) => acc + i.quantity, 0);
+  const cartItemCount = cart.reduce((acc, i) => acc + (Number.isInteger(i.quantity) ? i.quantity : 1), 0);
   const cartCost = cart.reduce((acc, i) => acc + i.costPrice * i.quantity, 0);
 
-  const addToCart = (product: Product, quantity = 1) => {
+  const addToCart = (product: Product, quantity?: number) => {
+    // Productos por peso: pedir los gramos con un modal.
+    if (product.priceUnit === 'kg' && quantity === undefined) {
+      setWeightProduct(product);
+      setSearchQuery('');
+      setMatches([]);
+      return;
+    }
+    const qtyToAdd = quantity ?? 1;
     const inCart = cart.find((i) => i.productId === product.id)?.quantity ?? 0;
-    if (inCart + quantity > product.stock) {
+    if (inCart + qtyToAdd > product.stock) {
       soundFX.playErrorBuzz();
       onToast({ message: `Stock insuficiente de ${product.name} (quedan ${product.stock})`, type: 'warning' });
       return;
@@ -94,7 +106,7 @@ export const QuickSalesPOS: React.FC<Props> = ({
       const idx = prev.findIndex((i) => i.productId === product.id);
       if (idx > -1) {
         const updated = [...prev];
-        const qty = updated[idx].quantity + quantity;
+        const qty = updated[idx].quantity + qtyToAdd;
         updated[idx] = { ...updated[idx], quantity: qty, subtotal: qty * updated[idx].unitPrice };
         return updated;
       }
@@ -104,15 +116,68 @@ export const QuickSalesPOS: React.FC<Props> = ({
           productId: product.id,
           barcode: product.barcode,
           name: product.name,
-          quantity,
+          quantity: qtyToAdd,
           unitPrice: product.sellPrice,
           costPrice: product.costPrice,
-          subtotal: quantity * product.sellPrice,
+          subtotal: qtyToAdd * product.sellPrice,
         },
       ];
     });
     setSearchQuery('');
     setMatches([]);
+  };
+
+  /** Fija el peso (kg) de un producto en el carrito, reemplazando la cantidad. */
+  const setWeightInCart = (product: Product, kg: number) => {
+    if (kg <= 0) return;
+    if (kg > product.stock) {
+      soundFX.playErrorBuzz();
+      onToast({ message: `Sólo hay ${fmtQty(product.stock)} kg de ${product.name}`, type: 'warning' });
+      return;
+    }
+    soundFX.playBarcodeBeep();
+    setCart((prev) => {
+      const idx = prev.findIndex((i) => i.productId === product.id);
+      const line: SaleItem = {
+        productId: product.id,
+        barcode: product.barcode,
+        name: product.name,
+        quantity: kg,
+        unitPrice: product.sellPrice,
+        costPrice: product.costPrice,
+        subtotal: kg * product.sellPrice,
+      };
+      if (idx > -1) {
+        const updated = [...prev];
+        updated[idx] = line;
+        return updated;
+      }
+      return [...prev, line];
+    });
+    setWeightProduct(null);
+  };
+
+  /** Agrega un ítem de monto libre (cigarrillo suelto, algo sin código, etc.). */
+  const addFreeAmount = () => {
+    const name = window.prompt('¿Qué vendés? (nombre del ítem)', 'Varios');
+    if (name === null) return;
+    const raw = window.prompt(`Precio de "${name.trim() || 'Varios'}"`, '');
+    if (raw === null) return;
+    const amount = parseFloat(raw) || 0;
+    if (amount <= 0) return;
+    soundFX.playBarcodeBeep();
+    setCart((prev) => [
+      ...prev,
+      {
+        productId: `libre-${Date.now()}`,
+        barcode: '',
+        name: name.trim() || 'Varios',
+        quantity: 1,
+        unitPrice: amount,
+        costPrice: 0,
+        subtotal: amount,
+      },
+    ]);
   };
 
   useEffect(() => {
@@ -281,7 +346,16 @@ export const QuickSalesPOS: React.FC<Props> = ({
 
         {/* Frecuentes */}
         <div>
-          <p className="mb-2 text-[13px] font-medium text-ink-soft">Productos frecuentes</p>
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-[13px] font-medium text-ink-soft">Productos frecuentes</p>
+            <button
+              onClick={addFreeAmount}
+              className="inline-flex items-center gap-1 text-[13px] font-medium text-ink-soft hover:text-ink"
+            >
+              <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+              Monto libre
+            </button>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {quickProducts.map((prod) => {
               const out = prod.stock === 0;
@@ -299,9 +373,12 @@ export const QuickSalesPOS: React.FC<Props> = ({
                 >
                   <span className="text-[13px] font-medium leading-tight line-clamp-2">{prod.name}</span>
                   <span className="mt-2 flex items-baseline justify-between">
-                    <span className="font-semibold nums">{money(prod.sellPrice)}</span>
+                    <span className="font-semibold nums">
+                      {money(prod.sellPrice)}
+                      {prod.priceUnit === 'kg' && <span className="text-xs text-muted">/kg</span>}
+                    </span>
                     <span className={cx('text-xs nums', out ? 'text-danger' : 'text-muted')}>
-                      {out ? 'agotado' : prod.stock}
+                      {out ? 'agotado' : fmtQty(prod.stock)}
                     </span>
                   </span>
                 </button>
@@ -372,38 +449,55 @@ export const QuickSalesPOS: React.FC<Props> = ({
               />
             ) : (
               <ul className="divide-y divide-line">
-                {cart.map((item) => (
-                  <li key={item.productId} className="flex items-center gap-3 px-4 py-2.5">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-medium">{item.name}</p>
-                      <p className="text-xs text-muted nums">{money(item.unitPrice)} c/u</p>
-                    </div>
-                    <div className="flex items-center rounded-lg border border-line">
-                      <button
-                        onClick={() => updateQuantity(item.productId, -1)}
-                        className="flex h-7 w-7 items-center justify-center text-ink-soft hover:text-ink"
-                      >
-                        <Minus className="h-3.5 w-3.5" />
-                      </button>
-                      <span className="w-6 text-center text-[13px] font-semibold nums">{item.quantity}</span>
-                      <button
-                        onClick={() => updateQuantity(item.productId, 1)}
-                        className="flex h-7 w-7 items-center justify-center text-ink-soft hover:text-ink"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    <div className="w-[68px] shrink-0 text-right">
-                      <span className="block text-[13px] font-semibold nums">{money(item.subtotal)}</span>
-                      <button
-                        onClick={() => removeFromCart(item.productId)}
-                        className="text-xs text-muted hover:text-danger"
-                      >
-                        Quitar
-                      </button>
-                    </div>
-                  </li>
-                ))}
+                {cart.map((item) => {
+                  const weight = isWeightItem(item.productId);
+                  return (
+                    <li key={item.productId} className="flex items-center gap-3 px-4 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-medium">{item.name}</p>
+                        <p className="text-xs text-muted nums">
+                          {money(item.unitPrice)} {weight ? '/ kg' : 'c/u'}
+                        </p>
+                      </div>
+                      {weight ? (
+                        <button
+                          onClick={() => {
+                            const p = productById.get(item.productId);
+                            if (p) setWeightProduct(p);
+                          }}
+                          className="rounded-lg border border-line px-2.5 h-7 text-[13px] font-semibold nums text-ink-soft hover:text-ink"
+                        >
+                          {fmtQty(item.quantity)} kg
+                        </button>
+                      ) : (
+                        <div className="flex items-center rounded-lg border border-line">
+                          <button
+                            onClick={() => updateQuantity(item.productId, -1)}
+                            className="flex h-7 w-7 items-center justify-center text-ink-soft hover:text-ink"
+                          >
+                            <Minus className="h-3.5 w-3.5" />
+                          </button>
+                          <span className="w-6 text-center text-[13px] font-semibold nums">{item.quantity}</span>
+                          <button
+                            onClick={() => updateQuantity(item.productId, 1)}
+                            className="flex h-7 w-7 items-center justify-center text-ink-soft hover:text-ink"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      )}
+                      <div className="w-[68px] shrink-0 text-right">
+                        <span className="block text-[13px] font-semibold nums">{money(item.subtotal)}</span>
+                        <button
+                          onClick={() => removeFromCart(item.productId)}
+                          className="text-xs text-muted hover:text-danger"
+                        >
+                          Quitar
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -595,6 +689,74 @@ export const QuickSalesPOS: React.FC<Props> = ({
           )}
         </Card>
       </div>
+
+      {weightProduct && (
+        <WeightModal
+          product={weightProduct}
+          current={cart.find((i) => i.productId === weightProduct.id)?.quantity ?? 0}
+          onClose={() => setWeightProduct(null)}
+          onConfirm={(kg) => setWeightInCart(weightProduct, kg)}
+        />
+      )}
     </div>
+  );
+};
+
+const WeightModal: React.FC<{
+  product: Product;
+  current: number;
+  onClose: () => void;
+  onConfirm: (kg: number) => void;
+}> = ({ product, current, onClose, onConfirm }) => {
+  const [grams, setGrams] = useState(current > 0 ? String(Math.round(current * 1000)) : '');
+  const kg = (parseFloat(grams) || 0) / 1000;
+
+  return (
+    <Modal
+      size="sm"
+      title={product.name}
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button variant="success" onClick={() => onConfirm(kg)} disabled={kg <= 0}>
+            Agregar {money(kg * product.sellPrice)}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-[13px] text-muted nums">
+          {money(product.sellPrice)} / kg · quedan {product.stock.toFixed(3)} kg
+        </p>
+        <div>
+          <Label>Peso en gramos</Label>
+          <div className="relative">
+            <Input
+              type="number"
+              autoFocus
+              value={grams}
+              onChange={(e) => setGrams(e.target.value)}
+              placeholder="Ej: 250"
+              className="pr-8 nums text-lg"
+            />
+            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted">g</span>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {[100, 200, 250, 500, 1000].map((g) => (
+            <button
+              key={g}
+              onClick={() => setGrams(String(g))}
+              className="rounded-lg border border-line px-2.5 py-1 text-xs font-medium nums text-ink-soft hover:border-line-strong"
+            >
+              {g >= 1000 ? '1 kg' : `${g} g`}
+            </button>
+          ))}
+        </div>
+      </div>
+    </Modal>
   );
 };

@@ -9,6 +9,9 @@ import type {
   StockMovement,
   Customer,
   CustomerPayment,
+  Supplier,
+  SupplierPayment,
+  Expense,
   CashSession,
   CashMovement,
   Purchase,
@@ -22,6 +25,9 @@ interface DB {
   stock_movements: StockMovement[];
   customers: Customer[];
   customer_payments: CustomerPayment[];
+  suppliers: Supplier[];
+  supplier_payments: SupplierPayment[];
+  expenses: Expense[];
   cash_sessions: CashSession[];
   cash_movements: CashMovement[];
   purchases: Purchase[];
@@ -33,6 +39,9 @@ const empty = (): DB => ({
   stock_movements: [],
   customers: [],
   customer_payments: [],
+  suppliers: [],
+  supplier_payments: [],
+  expenses: [],
   cash_sessions: [],
   cash_movements: [],
   purchases: [],
@@ -60,11 +69,18 @@ const uid = (p = 'id') => `${p}-${Date.now()}-${Math.random().toString(36).slice
 const nowISO = () => new Date().toISOString();
 
 // Sembrado inicial la primera vez (para que la demo no arranque vacía).
-export function seedIfEmpty(products: Product[], customers: Customer[]) {
+export function seedIfEmpty(
+  products: Product[],
+  customers: Customer[],
+  suppliers: Supplier[] = [],
+  sales: Sale[] = [],
+) {
   const db = load();
   if (db.products.length === 0) {
     db.products = products;
     db.customers = customers;
+    db.suppliers = suppliers;
+    db.sales = sales;
     save(db);
   }
 }
@@ -248,7 +264,8 @@ export const localStore = {
     const db = load();
     const id = uid('buy');
     const ts = nowISO();
-    db.purchases.push({ ...purchase, id, timestamp: ts });
+    const paid = purchase.paid ?? true;
+    db.purchases.push({ ...purchase, id, timestamp: ts, paid });
     for (const item of purchase.items) {
       const prod = db.products.find((p) => p.id === item.productId);
       if (prod) {
@@ -265,6 +282,13 @@ export const localStore = {
           refId: id,
           createdAt: ts,
         });
+      }
+    }
+    if (!paid && purchase.supplierId) {
+      const s = db.suppliers.find((x) => x.id === purchase.supplierId);
+      if (s) {
+        s.balance += purchase.total;
+        s.updatedAt = ts;
       }
     }
     save(db);
@@ -341,6 +365,123 @@ export const localStore = {
         createdAt: nowISO(),
       });
     }
+    save(db);
+  },
+
+  // ----- Proveedores -----
+  async fetchSuppliers(): Promise<Supplier[]> {
+    return load().suppliers.sort((a, b) => a.name.localeCompare(b.name));
+  },
+
+  async saveSupplier(supplier: Partial<Supplier>): Promise<Supplier> {
+    const db = load();
+    const id = supplier.id || uid('sup');
+    const existing = db.suppliers.find((s) => s.id === id);
+    const ts = nowISO();
+    let result: Supplier;
+    if (existing) {
+      result = { ...existing, ...supplier, id, updatedAt: ts };
+      db.suppliers = db.suppliers.map((s) => (s.id === id ? result : s));
+    } else {
+      result = { balance: 0, ...supplier, id, name: supplier.name || 'Proveedor', createdAt: ts, updatedAt: ts };
+      db.suppliers.push(result);
+    }
+    save(db);
+    return result;
+  },
+
+  async deleteSupplier(id: string): Promise<void> {
+    const db = load();
+    db.suppliers = db.suppliers.filter((s) => s.id !== id);
+    save(db);
+  },
+
+  async fetchSupplierPayments(supplierId: string): Promise<SupplierPayment[]> {
+    return load()
+      .supplier_payments.filter((p) => p.supplierId === supplierId)
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+  },
+
+  async registerSupplierPayment(
+    supplierId: string,
+    amount: number,
+    method: string,
+    notes: string,
+    cashSessionId: string | null,
+  ): Promise<void> {
+    const db = load();
+    db.supplier_payments.push({
+      id: uid('spay'),
+      supplierId,
+      amount,
+      method: method as SupplierPayment['method'],
+      notes: notes || null,
+      createdAt: nowISO(),
+    });
+    const s = db.suppliers.find((x) => x.id === supplierId);
+    if (s) {
+      s.balance -= amount;
+      s.updatedAt = nowISO();
+    }
+    if (method === 'efectivo' && cashSessionId) {
+      db.cash_movements.push({
+        id: uid('cm'),
+        cashSessionId,
+        type: 'pago_proveedor',
+        amount: -amount,
+        reason: 'Pago a proveedor',
+        createdAt: nowISO(),
+      });
+    }
+    save(db);
+  },
+
+  // ----- Gastos -----
+  async fetchExpenses(fromISO?: string, toISO?: string): Promise<Expense[]> {
+    return load()
+      .expenses.filter((e) => {
+        if (fromISO && e.date < fromISO) return false;
+        if (toISO && e.date > toISO) return false;
+        return true;
+      })
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  },
+
+  async registerExpense(
+    category: string,
+    description: string,
+    amount: number,
+    method: string,
+    cashSessionId: string | null,
+  ): Promise<void> {
+    const db = load();
+    const ts = nowISO();
+    db.expenses.push({
+      id: uid('exp'),
+      date: ts,
+      category: category || 'General',
+      description: description || null,
+      amount,
+      paymentMethod: method as Expense['paymentMethod'],
+      cashSessionId: cashSessionId || null,
+      createdAt: ts,
+    });
+    if (method === 'efectivo' && cashSessionId) {
+      db.cash_movements.push({
+        id: uid('cm'),
+        cashSessionId,
+        type: 'gasto',
+        amount: -amount,
+        reason: description || category,
+        createdAt: ts,
+      });
+    }
+    save(db);
+  },
+
+  async deleteExpense(id: string): Promise<void> {
+    const db = load();
+    db.expenses = db.expenses.filter((e) => e.id !== id);
     save(db);
   },
 

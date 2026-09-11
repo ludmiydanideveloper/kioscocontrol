@@ -6,6 +6,7 @@ import {
   Package,
   BarChart3,
   Users,
+  Truck,
   Wallet,
   Camera,
   Volume2,
@@ -16,7 +17,14 @@ import {
 import { cx } from './ui';
 import type { BackendMode } from '../utils/db';
 
-export type NavTab = 'pos' | 'alerts' | 'inventory' | 'customers' | 'cash' | 'reports';
+export type NavTab =
+  | 'pos'
+  | 'alerts'
+  | 'inventory'
+  | 'customers'
+  | 'suppliers'
+  | 'cash'
+  | 'reports';
 
 interface HeaderNavProps {
   currentTab: NavTab;
@@ -24,6 +32,7 @@ interface HeaderNavProps {
   lowStockCount: number;
   outOfStockCount: number;
   receivablesTotal: number;
+  payablesTotal: number;
   cashOpen: boolean;
   backendMode: BackendMode;
   isConnected: boolean;
@@ -40,6 +49,7 @@ const TABS: { id: NavTab; label: string; icon: React.ElementType }[] = [
   { id: 'alerts', label: 'Alertas', icon: AlertTriangle },
   { id: 'inventory', label: 'Inventario', icon: Package },
   { id: 'customers', label: 'Fiado', icon: Users },
+  { id: 'suppliers', label: 'Proveedores', icon: Truck },
   { id: 'cash', label: 'Caja', icon: Wallet },
   { id: 'reports', label: 'Reportes', icon: BarChart3 },
 ];
@@ -50,6 +60,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   lowStockCount,
   outOfStockCount,
   receivablesTotal,
+  payablesTotal,
   cashOpen,
   backendMode,
   isConnected,
@@ -65,6 +76,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   const dot = (id: NavTab): { count?: number; tone: string } | null => {
     if (id === 'alerts' && totalAlerts > 0) return { count: totalAlerts, tone: 'bg-danger' };
     if (id === 'customers' && receivablesTotal > 0) return { tone: 'bg-warn' };
+    if (id === 'suppliers' && payablesTotal > 0) return { tone: 'bg-warn' };
     if (id === 'cash' && cashOpen) return { tone: 'bg-brand' };
     return null;
   };
@@ -107,13 +119,14 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                 <button
                   key={id}
                   onClick={() => onTabChange(id)}
+                  title={label}
                   className={cx(
-                    'relative inline-flex items-center gap-1.5 rounded-lg px-3 h-9 text-[13px] font-medium transition-colors',
+                    'relative inline-flex items-center gap-1.5 rounded-lg px-2.5 xl:px-3 h-9 text-[13px] font-medium transition-colors',
                     active ? 'bg-ink text-white' : 'text-ink-soft hover:bg-surface-2 hover:text-ink',
                   )}
                 >
                   <Icon className="h-4 w-4" strokeWidth={2} />
-                  {label}
+                  <span className="hidden xl:inline">{label}</span>
                   {d && (
                     <span
                       className={cx(

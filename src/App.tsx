@@ -4,10 +4,11 @@ import { QuickSalesPOS } from './components/QuickSalesPOS';
 import { LowStockAlerts } from './components/LowStockAlerts';
 import { InventoryManager } from './components/InventoryManager';
 import { CustomersView } from './components/CustomersView';
+import { SuppliersView } from './components/SuppliersView';
 import { CashRegister } from './components/CashRegister';
 import { LockScreen } from './components/LockScreen';
 import { SettingsModal } from './components/SettingsModal';
-import { Product, Customer, CashSession } from './types';
+import { Product, Customer, Supplier, CashSession } from './types';
 import { soundFX } from './utils/audio';
 import { supabase } from './utils/supabase';
 import * as db from './utils/db';
@@ -28,6 +29,7 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('pos');
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [cashSession, setCashSession] = useState<CashSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -70,6 +72,14 @@ export default function App() {
     }
   }, []);
 
+  const refreshSuppliers = useCallback(async () => {
+    try {
+      setSuppliers(await db.fetchSuppliers());
+    } catch (err) {
+      console.error('Error cargando proveedores:', err);
+    }
+  }, []);
+
   const refreshCashSession = useCallback(async () => {
     try {
       setCashSession(await db.fetchOpenCashSession());
@@ -86,7 +96,7 @@ export default function App() {
       const chosen = await db.initBackend();
       if (cancelled) return;
       setBackendMode(chosen);
-      await Promise.all([refreshProducts(), refreshCustomers(), refreshCashSession()]);
+      await Promise.all([refreshProducts(), refreshCustomers(), refreshSuppliers(), refreshCashSession()]);
       if (cancelled) return;
       setIsLoading(false);
 
@@ -95,6 +105,7 @@ export default function App() {
           .channel('kiosco-realtime')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, refreshProducts)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, refreshCustomers)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'suppliers' }, refreshSuppliers)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'cash_sessions' }, refreshCashSession)
           .subscribe((status) => !cancelled && setIsConnected(status === 'SUBSCRIBED'));
       }
@@ -104,7 +115,7 @@ export default function App() {
       cancelled = true;
       if (channel) supabase.removeChannel(channel);
     };
-  }, [refreshProducts, refreshCustomers, refreshCashSession]);
+  }, [refreshProducts, refreshCustomers, refreshSuppliers, refreshCashSession]);
 
   // -------------------------------------------------------------------------
   // Escáner físico (lector USB / Bluetooth que "tipea" + Enter)
@@ -204,6 +215,7 @@ export default function App() {
   const lowStockCount = products.filter((p) => p.stock > 0 && p.stock <= p.minStock).length;
   const outOfStockCount = products.filter((p) => p.stock === 0).length;
   const receivablesTotal = customers.reduce((acc, c) => acc + Math.max(0, c.balance), 0);
+  const payablesTotal = suppliers.reduce((acc, s) => acc + Math.max(0, s.balance), 0);
 
   if (locked) return <LockScreen onUnlock={() => setLocked(false)} />;
 
@@ -215,6 +227,7 @@ export default function App() {
         lowStockCount={lowStockCount}
         outOfStockCount={outOfStockCount}
         receivablesTotal={receivablesTotal}
+        payablesTotal={payablesTotal}
         cashOpen={!!cashSession}
         backendMode={backendMode}
         isConnected={isConnected}
@@ -285,11 +298,14 @@ export default function App() {
             {currentTab === 'inventory' && (
               <InventoryManager
                 products={products}
+                suppliers={suppliers}
                 onSaveProduct={handleSaveProduct}
                 onDeleteProduct={handleDeleteProduct}
                 onAdjustStock={handleAdjustStock}
                 onOpenScannerForBarcode={openScannerForBarcode}
-                onRefresh={refreshProducts}
+                onRefresh={async () => {
+                  await Promise.all([refreshProducts(), refreshSuppliers()]);
+                }}
                 onToast={showToast}
               />
             )}
@@ -299,6 +315,15 @@ export default function App() {
                 customers={customers}
                 cashSession={cashSession}
                 onRefresh={refreshCustomers}
+                onToast={showToast}
+              />
+            )}
+
+            {currentTab === 'suppliers' && (
+              <SuppliersView
+                suppliers={suppliers}
+                cashSession={cashSession}
+                onRefresh={refreshSuppliers}
                 onToast={showToast}
               />
             )}
@@ -319,7 +344,16 @@ export default function App() {
                   </div>
                 }
               >
-                <ReportsView products={products} customers={customers} onDataChanged={refreshProducts} />
+                <ReportsView
+                  products={products}
+                  customers={customers}
+                  suppliers={suppliers}
+                  cashSession={cashSession}
+                  onDataChanged={async () => {
+                    await Promise.all([refreshProducts(), refreshCustomers(), refreshCashSession()]);
+                  }}
+                  onToast={showToast}
+                />
               </Suspense>
             )}
           </>

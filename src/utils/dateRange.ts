@@ -6,6 +6,13 @@ export interface Range {
   label: string;
 }
 
+/** Interpreta 'YYYY-MM-DD' (de un <input type="date">) como fecha local, no UTC. */
+function parseLocalDate(s: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return new Date(s);
+}
+
 function startOfDay(d: Date): Date {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -41,8 +48,8 @@ export function resolveRange(
       return { from: startOfDay(m), to: endOfDay(now), label: 'Este mes' };
     }
     case 'custom': {
-      const f = customFrom ? startOfDay(new Date(customFrom)) : startOfDay(now);
-      const t = customTo ? endOfDay(new Date(customTo)) : endOfDay(now);
+      const f = customFrom ? startOfDay(parseLocalDate(customFrom)) : startOfDay(now);
+      const t = customTo ? endOfDay(parseLocalDate(customTo)) : endOfDay(now);
       return {
         from: f,
         to: t,

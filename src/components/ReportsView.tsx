@@ -10,6 +10,9 @@ import {
   Wallet,
   Clock,
   Printer,
+  Plus,
+  Trash2,
+  Receipt,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -22,17 +25,46 @@ import {
   BarChart,
   Bar,
 } from 'recharts';
-import { ReportSummary, Sale, Product, Customer, PaymentMethod, DateRangePreset } from '../types';
-import { PAYMENT_LABELS } from '../types';
+import {
+  ReportSummary,
+  Sale,
+  Product,
+  Customer,
+  Supplier,
+  Expense,
+  CashSession,
+  PaymentMethod,
+  DateRangePreset,
+} from '../types';
+import { PAYMENT_LABELS, EXPENSE_CATEGORIES } from '../types';
 import { money, number as fmtNum, dateTime, longDate } from '../utils/format';
 import { resolveRange } from '../utils/dateRange';
-import { Card, Button, IconButton, Badge, Stat, Segmented, SectionTitle, Empty, cx } from './ui';
+import {
+  Card,
+  Button,
+  IconButton,
+  Input,
+  Select,
+  Label,
+  Badge,
+  Stat,
+  Segmented,
+  SectionTitle,
+  Empty,
+  Modal,
+  cx,
+} from './ui';
 import * as db from '../utils/db';
+
+type Toast = (t: { message: string; type: 'info' | 'warning' | 'success' | 'error' }, ms?: number) => void;
 
 interface Props {
   products: Product[];
   customers: Customer[];
+  suppliers: Supplier[];
+  cashSession: CashSession | null;
   onDataChanged?: () => void;
+  onToast: Toast;
 }
 
 const PRESETS: { value: DateRangePreset; label: string }[] = [
@@ -54,14 +86,23 @@ const TOOLTIP = {
   padding: '6px 10px',
 } as const;
 
-export const ReportsView: React.FC<Props> = ({ products, customers, onDataChanged }) => {
+export const ReportsView: React.FC<Props> = ({
+  products,
+  customers,
+  suppliers,
+  cashSession,
+  onDataChanged,
+  onToast,
+}) => {
   const [preset, setPreset] = useState<DateRangePreset>('today');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [allSales, setAllSales] = useState<Sale[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [voidingId, setVoidingId] = useState<string | null>(null);
+  const [expenseModal, setExpenseModal] = useState(false);
 
   const sales = useMemo(() => allSales.filter((s) => s.status !== 'cancelled'), [allSales]);
   const range = useMemo(() => resolveRange(preset, customFrom, customTo), [preset, customFrom, customTo]);
@@ -70,7 +111,12 @@ export const ReportsView: React.FC<Props> = ({ products, customers, onDataChange
     try {
       setIsLoading(true);
       setError(null);
-      setAllSales(await db.fetchSales(range.from.toISOString(), range.to.toISOString()));
+      const [s, e] = await Promise.all([
+        db.fetchSales(range.from.toISOString(), range.to.toISOString()),
+        db.fetchExpenses(range.from.toISOString(), range.to.toISOString()),
+      ]);
+      setAllSales(s);
+      setExpenses(e);
     } catch (err: any) {
       setError(err.message || 'Error cargando reportes');
     } finally {
@@ -149,10 +195,19 @@ export const ReportsView: React.FC<Props> = ({ products, customers, onDataChange
     const valCost = products.reduce((a, p) => a + p.costPrice * p.stock, 0);
     const valRetail = products.reduce((a, p) => a + p.sellPrice * p.stock, 0);
 
+    const expByCat: Record<string, number> = {};
+    let totalExpenses = 0;
+    expenses.forEach((e) => {
+      totalExpenses += e.amount;
+      expByCat[e.category] = (expByCat[e.category] || 0) + e.amount;
+    });
+
     return {
       rangeLabel: range.label,
       totalSales: Math.round(totalSales),
       totalProfit: Math.round(totalProfit),
+      totalExpenses: Math.round(totalExpenses),
+      netProfit: Math.round(totalProfit - totalExpenses),
       salesCount,
       averageTicket: salesCount > 0 ? Math.round(totalSales / salesCount) : 0,
       itemsSold,
@@ -162,6 +217,10 @@ export const ReportsView: React.FC<Props> = ({ products, customers, onDataChange
       lowStockCount: products.filter((p) => p.stock > 0 && p.stock <= p.minStock).length,
       outOfStockCount: products.filter((p) => p.stock === 0).length,
       totalReceivables: customers.reduce((a, c) => a + Math.max(0, c.balance), 0),
+      totalPayables: suppliers.reduce((a, s) => a + Math.max(0, s.balance), 0),
+      expensesByCategory: Object.entries(expByCat)
+        .map(([category, total]) => ({ category, total: Math.round(total) }))
+        .sort((a, b) => b.total - a.total),
       topSellingProducts: Object.values(productSales).sort((a, b) => b.quantity - a.quantity).slice(0, 6),
       salesByPaymentMethod: (Object.keys(methodData) as PaymentMethod[]).map((m) => ({
         method: m,
@@ -173,7 +232,17 @@ export const ReportsView: React.FC<Props> = ({ products, customers, onDataChange
         .map(([hour, d]) => ({ hour, ...d }))
         .sort((a, b) => a.hour.localeCompare(b.hour)),
     };
-  }, [sales, products, customers, range.label]);
+  }, [sales, expenses, products, customers, suppliers, range.label]);
+
+  const deleteExpense = async (id: string) => {
+    try {
+      await db.deleteExpense(id);
+      await fetchData();
+      onDataChanged?.();
+    } catch (err: any) {
+      onToast({ message: err.message, type: 'error' });
+    }
+  };
 
   const exportToCSV = () => {
     const headers = ['ID', 'Fecha', 'Total', 'Ganancia', 'Pago', 'Artículos', 'Cliente'];
@@ -257,16 +326,21 @@ export const ReportsView: React.FC<Props> = ({ products, customers, onDataChange
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <Stat label={`Ventas · ${range.label}`} value={money(summary.totalSales)} hint={`${summary.salesCount} operaciones`} icon={DollarSign} />
-            <Stat label="Ganancia neta" value={money(summary.totalProfit)} hint={`margen ${profitMargin}%`} tone="positive" icon={TrendingUp} />
-            <Stat label="Ticket promedio" value={money(summary.averageTicket)} hint={`${fmtNum(summary.itemsSold)} unidades`} icon={ShoppingBag} />
-            <Stat label="Capital en stock" value={money(summary.totalInventoryValuationRetail)} hint={`costo ${money(summary.totalInventoryValuationCost)}`} icon={Wallet} />
+            <Stat label="Ganancia bruta" value={money(summary.totalProfit)} hint={`margen ${profitMargin}%`} icon={TrendingUp} />
+            <Stat label="Gastos" value={money(summary.totalExpenses)} hint="del período" tone={summary.totalExpenses > 0 ? 'negative' : 'default'} icon={Receipt} />
+            <Stat
+              label="Ganancia neta"
+              value={money(summary.netProfit)}
+              hint="bruta − gastos"
+              tone={summary.netProfit >= 0 ? 'positive' : 'negative'}
+            />
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Stat label="A cobrar (fiado)" value={money(summary.totalReceivables)} hint="cuentas corrientes" tone={summary.totalReceivables > 0 ? 'negative' : 'default'} />
-            <Stat label="Ganancia potencial" value={money(summary.potentialProfit)} hint="si se vende todo el stock" />
-            <Stat label="Stock bajo" value={summary.lowStockCount} hint="productos en alerta" />
-            <Stat label="Sin stock" value={summary.outOfStockCount} hint="productos agotados" />
+            <Stat label="Ticket promedio" value={money(summary.averageTicket)} hint={`${fmtNum(summary.itemsSold)} unidades`} icon={ShoppingBag} />
+            <Stat label="Capital en stock" value={money(summary.totalInventoryValuationRetail)} hint={`costo ${money(summary.totalInventoryValuationCost)}`} icon={Wallet} />
+            <Stat label="A cobrar (fiado)" value={money(summary.totalReceivables)} hint="cuentas de clientes" tone={summary.totalReceivables > 0 ? 'negative' : 'default'} />
+            <Stat label="A pagar (proveedores)" value={money(summary.totalPayables)} hint="cuentas con proveedores" tone={summary.totalPayables > 0 ? 'negative' : 'default'} />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -321,6 +395,49 @@ export const ReportsView: React.FC<Props> = ({ products, customers, onDataChange
               </div>
             </Card>
           </div>
+
+          <Card className="overflow-hidden p-0">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+              <SectionTitle icon={Receipt}>Gastos · {range.label}</SectionTitle>
+              <Button size="sm" variant="secondary" onClick={() => setExpenseModal(true)}>
+                <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+                Registrar gasto
+              </Button>
+            </div>
+            {expenses.length === 0 ? (
+              <Empty title="Sin gastos" hint="Registrá alquiler, servicios, sueldos… para ver la ganancia neta real." />
+            ) : (
+              <>
+                {summary.expensesByCategory.length > 1 && (
+                  <div className="flex flex-wrap gap-1.5 px-4 py-2.5 border-b border-line">
+                    {summary.expensesByCategory.map((c) => (
+                      <Badge key={c.category}>
+                        {c.category} {money(c.total)}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                <div className="divide-y divide-line max-h-72 overflow-y-auto">
+                  {expenses.map((e) => (
+                    <div key={e.id} className="flex items-center justify-between px-4 py-2.5 text-[13px]">
+                      <div className="min-w-0">
+                        <span className="font-medium">{e.description || e.category}</span>
+                        <span className="block text-xs text-muted nums">
+                          {dateTime(e.date)} · {e.category} · {PAYMENT_LABELS[e.paymentMethod as PaymentMethod] || e.paymentMethod}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        <span className="font-semibold nums text-danger">−{money(e.amount)}</span>
+                        <IconButton variant="ghost" className="h-7 w-7 hover:text-danger" onClick={() => deleteExpense(e.id)}>
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </IconButton>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </Card>
 
           <Card pad>
             <SectionTitle icon={Award} className="mb-3">
@@ -411,6 +528,116 @@ export const ReportsView: React.FC<Props> = ({ products, customers, onDataChange
           </Card>
         </>
       )}
+
+      {expenseModal && (
+        <ExpenseModal
+          cashSession={cashSession}
+          onClose={() => setExpenseModal(false)}
+          onDone={async () => {
+            setExpenseModal(false);
+            await fetchData();
+            onDataChanged?.();
+            onToast({ message: 'Gasto registrado', type: 'success' });
+          }}
+          onError={(m) => onToast({ message: m, type: 'error' })}
+        />
+      )}
     </div>
+  );
+};
+
+const ExpenseModal: React.FC<{
+  cashSession: CashSession | null;
+  onClose: () => void;
+  onDone: () => Promise<void>;
+  onError: (m: string) => void;
+}> = ({ cashSession, onClose, onDone, onError }) => {
+  const [category, setCategory] = useState<string>('General');
+  const [description, setDescription] = useState('');
+  const [amount, setAmount] = useState('');
+  const [method, setMethod] = useState<PaymentMethod>('efectivo');
+  const [busy, setBusy] = useState(false);
+  const value = parseFloat(amount) || 0;
+
+  const save = async () => {
+    if (value <= 0) return;
+    try {
+      setBusy(true);
+      await db.registerExpense(
+        category,
+        description,
+        value,
+        method,
+        method === 'efectivo' ? cashSession?.id ?? null : null,
+      );
+      await onDone();
+    } catch (err: any) {
+      onError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      size="sm"
+      title="Registrar gasto"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancelar
+          </Button>
+          <Button variant="primary" onClick={save} disabled={busy || value <= 0}>
+            {busy ? 'Guardando…' : 'Registrar'}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div>
+          <Label>Categoría</Label>
+          <Select value={category} onChange={(e) => setCategory(e.target.value)}>
+            {EXPENSE_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div>
+          <Label>Descripción</Label>
+          <Input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Ej: Luz — factura enero"
+          />
+        </div>
+        <div>
+          <Label>Monto</Label>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">$</span>
+            <Input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="pl-7 nums" />
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-1.5">
+          {(['efectivo', 'transferencia', 'debito'] as PaymentMethod[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMethod(m)}
+              className={cx(
+                'rounded-lg border px-1 py-2 text-[11px] font-medium transition-colors',
+                method === m ? 'border-ink bg-ink text-white' : 'border-line text-ink-soft hover:border-line-strong',
+              )}
+            >
+              {PAYMENT_LABELS[m]}
+            </button>
+          ))}
+        </div>
+        {method === 'efectivo' && !cashSession && (
+          <p className="text-xs text-warn">Caja cerrada: el gasto no se descuenta del arqueo.</p>
+        )}
+      </div>
+    </Modal>
   );
 };
