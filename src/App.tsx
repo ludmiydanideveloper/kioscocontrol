@@ -13,7 +13,7 @@ import { soundFX } from './utils/audio';
 import { supabase } from './utils/supabase';
 import * as db from './utils/db';
 import type { BackendMode } from './utils/db';
-import { isUnlocked, lockNow, isPinSet } from './utils/lock';
+import { currentRole, authRequired, logout, type Role } from './utils/auth';
 import { AlertCircle, ShieldCheck, WifiOff } from 'lucide-react';
 
 const ReportsView = lazy(() =>
@@ -43,8 +43,9 @@ export default function App() {
   const [posScan, setPosScan] = useState<{ code: string; n: number } | null>(null);
   const scanCounter = useRef(0);
 
-  const [locked, setLocked] = useState(!isUnlocked());
+  const [role, setRole] = useState<Role | null>(currentRole());
   const [showSettings, setShowSettings] = useState(false);
+  const isCashier = role === 'cashier';
   const [toast, setToast] = useState<Toast | null>(null);
   const showToast = useCallback((t: Toast, ms = 3200) => {
     setToast(t);
@@ -217,13 +218,16 @@ export default function App() {
   const receivablesTotal = customers.reduce((acc, c) => acc + Math.max(0, c.balance), 0);
   const payablesTotal = suppliers.reduce((acc, s) => acc + Math.max(0, s.balance), 0);
 
-  if (locked) return <LockScreen onUnlock={() => setLocked(false)} />;
+  if (authRequired() && !role) return <LockScreen onUnlock={setRole} />;
+
+  const activeTab: NavTab = isCashier ? 'pos' : currentTab;
 
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col">
       <HeaderNav
-        currentTab={currentTab}
+        currentTab={activeTab}
         onTabChange={setCurrentTab}
+        role={role}
         lowStockCount={lowStockCount}
         outOfStockCount={outOfStockCount}
         receivablesTotal={receivablesTotal}
@@ -234,9 +238,8 @@ export default function App() {
         onOpenScanner={openScannerForPOS}
         isAudioMuted={isAudioMuted}
         onToggleAudio={handleToggleAudio}
-        onOpenSettings={() => setShowSettings(true)}
-        pinEnabled={isPinSet()}
-        onLock={() => { lockNow(); setLocked(true); }}
+        onOpenSettings={role === 'admin' ? () => setShowSettings(true) : undefined}
+        onLogout={authRequired() ? () => { logout(); setRole(null); } : undefined}
       />
 
       {toast && (
@@ -276,7 +279,7 @@ export default function App() {
           </div>
         ) : (
           <>
-            {currentTab === 'pos' && (
+            {activeTab === 'pos' && (
               <QuickSalesPOS
                 products={products}
                 customers={customers}
@@ -287,15 +290,16 @@ export default function App() {
                 onSaleCompleted={async () => {
                   await Promise.all([refreshProducts(), refreshCustomers(), refreshCashSession()]);
                 }}
+                onCustomersChanged={refreshCustomers}
                 onToast={showToast}
               />
             )}
 
-            {currentTab === 'alerts' && (
+            {activeTab === 'alerts' && (
               <LowStockAlerts products={products} onAdjustStock={handleAdjustStock} />
             )}
 
-            {currentTab === 'inventory' && (
+            {activeTab === 'inventory' && (
               <InventoryManager
                 products={products}
                 suppliers={suppliers}
@@ -310,7 +314,7 @@ export default function App() {
               />
             )}
 
-            {currentTab === 'customers' && (
+            {activeTab === 'customers' && (
               <CustomersView
                 customers={customers}
                 cashSession={cashSession}
@@ -319,7 +323,7 @@ export default function App() {
               />
             )}
 
-            {currentTab === 'suppliers' && (
+            {activeTab === 'suppliers' && (
               <SuppliersView
                 suppliers={suppliers}
                 cashSession={cashSession}
@@ -328,7 +332,7 @@ export default function App() {
               />
             )}
 
-            {currentTab === 'cash' && (
+            {activeTab === 'cash' && (
               <CashRegister
                 cashSession={cashSession}
                 onRefresh={refreshCashSession}
@@ -336,7 +340,7 @@ export default function App() {
               />
             )}
 
-            {currentTab === 'reports' && (
+            {activeTab === 'reports' && (
               <Suspense
                 fallback={
                   <div className="flex items-center justify-center py-20">

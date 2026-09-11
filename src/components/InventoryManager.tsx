@@ -11,10 +11,13 @@ import {
   Minus,
   Package,
   Percent,
+  Tag,
+  Sparkles,
 } from 'lucide-react';
 import { Product, StockMovement, PurchaseItem, Supplier } from '../types';
 import { CATEGORIES } from '../types';
 import { money, marginPct, dateTime } from '../utils/format';
+import { generateInternalBarcode, printLabels, type LabelSpec } from '../utils/barcode';
 import { Card, Button, IconButton, Input, Select, Label, Badge, Stat, Modal, SectionTitle, Empty, cx } from './ui';
 import * as db from '../utils/db';
 
@@ -56,9 +59,19 @@ export const InventoryManager: React.FC<Props> = ({
   const [isPurchaseOpen, setIsPurchaseOpen] = useState(false);
   const [isMovementsOpen, setIsMovementsOpen] = useState(false);
   const [isPriceOpen, setIsPriceOpen] = useState(false);
+  const [isLabelsOpen, setIsLabelsOpen] = useState(false);
   const [movements, setMovements] = useState<StockMovement[]>([]);
 
   const categories = ['Todos', ...CATEGORIES];
+
+  /** Genera un código interno EAN-13 que todavía no esté en uso. */
+  const freshBarcode = (): string => {
+    const used = new Set(products.map((p) => p.barcode));
+    let seq = products.filter((p) => p.barcode.startsWith('20')).length + 1;
+    let code = generateInternalBarcode(seq);
+    while (used.has(code)) code = generateInternalBarcode(++seq);
+    return code;
+  };
 
   const filteredProducts = useMemo(
     () =>
@@ -152,10 +165,14 @@ export const InventoryManager: React.FC<Props> = ({
               className="h-10 pl-9"
             />
           </div>
-          <div className="flex gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             <Button variant="secondary" onClick={() => setIsPriceOpen(true)}>
               <Percent className="h-4 w-4" strokeWidth={2} />
               <span className="hidden sm:inline">Precios</span>
+            </Button>
+            <Button variant="secondary" onClick={() => setIsLabelsOpen(true)}>
+              <Tag className="h-4 w-4" strokeWidth={2} />
+              <span className="hidden sm:inline">Etiquetas</span>
             </Button>
             <Button variant="secondary" onClick={() => setIsPurchaseOpen(true)}>
               <Truck className="h-4 w-4" strokeWidth={2} />
@@ -288,9 +305,14 @@ export const InventoryManager: React.FC<Props> = ({
           onScanBarcode={() =>
             onOpenScannerForBarcode((code) => setEditingProduct((prev) => ({ ...prev, barcode: code })))
           }
+          onGenerateBarcode={() => setEditingProduct((prev) => ({ ...prev, barcode: freshBarcode() }))}
           isSubmitting={isSubmitting}
           formError={formError}
         />
+      )}
+
+      {isLabelsOpen && (
+        <LabelsModal products={products} onClose={() => setIsLabelsOpen(false)} />
       )}
 
       {isPurchaseOpen && (
@@ -342,9 +364,10 @@ const ProductForm: React.FC<{
   onClose: () => void;
   onSubmit: (e: React.FormEvent) => void;
   onScanBarcode: () => void;
+  onGenerateBarcode: () => void;
   isSubmitting: boolean;
   formError: string | null;
-}> = ({ product, setProduct, onClose, onSubmit, onScanBarcode, isSubmitting, formError }) => {
+}> = ({ product, setProduct, onClose, onSubmit, onScanBarcode, onGenerateBarcode, isSubmitting, formError }) => {
   const set = (patch: Partial<Product>) => setProduct((prev) => ({ ...prev, ...patch }));
 
   return (
@@ -388,6 +411,14 @@ const ProductForm: React.FC<{
               <span className="hidden sm:inline">Escanear</span>
             </Button>
           </div>
+          <button
+            type="button"
+            onClick={onGenerateBarcode}
+            className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-ink-soft hover:text-ink"
+          >
+            <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />
+            Generar código interno (producto sin código de fábrica)
+          </button>
         </div>
 
         <div>
@@ -823,3 +854,104 @@ const MovementsModal: React.FC<{
     )}
   </Modal>
 );
+
+// ---------------------------------------------------------------------------
+// Impresión de etiquetas de código de barras
+// ---------------------------------------------------------------------------
+const LabelsModal: React.FC<{ products: Product[]; onClose: () => void }> = ({ products, onClose }) => {
+  const [search, setSearch] = useState('');
+  const [qty, setQty] = useState<Record<string, number>>({});
+
+  const results = search.trim()
+    ? products
+        .filter(
+          (p) =>
+            p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode.includes(search.trim()),
+        )
+        .slice(0, 8)
+    : [];
+
+  const selected: LabelSpec[] = products
+    .filter((p) => (qty[p.id] || 0) > 0)
+    .map((p) => ({ product: p, qty: qty[p.id] }));
+  const totalLabels = selected.reduce((a, s) => a + s.qty, 0);
+
+  const bump = (id: string, delta: number) =>
+    setQty((prev) => ({ ...prev, [id]: Math.max(0, (prev[id] || 0) + delta) }));
+
+  return (
+    <Modal
+      size="lg"
+      title="Etiquetas de código de barras"
+      onClose={onClose}
+      footer={
+        <div className="flex w-full items-center justify-between">
+          <span className="text-[13px] text-muted nums">
+            {totalLabels} etiqueta{totalLabels === 1 ? '' : 's'}
+          </span>
+          <Button variant="primary" disabled={totalLabels === 0} onClick={() => printLabels(selected)}>
+            <Tag className="h-3.5 w-3.5" strokeWidth={2} />
+            Imprimir
+          </Button>
+        </div>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-xs text-muted">
+          Elegí productos y cuántas etiquetas de cada uno. Se imprime una hoja A4 con 3 columnas.
+        </p>
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Buscar producto para agregar…"
+            className="pl-9"
+          />
+        </div>
+
+        {results.length > 0 && (
+          <div className="overflow-hidden rounded-lg border border-line divide-y divide-line">
+            {results.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => {
+                  bump(p.id, 1);
+                  setSearch('');
+                }}
+                className="flex w-full items-center justify-between px-3 py-2 text-[13px] hover:bg-surface-2"
+              >
+                <span className="truncate font-medium">{p.name}</span>
+                <span className="text-muted nums">{p.barcode}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selected.length === 0 ? (
+          <p className="py-6 text-center text-[13px] text-muted">Todavía no elegiste productos.</p>
+        ) : (
+          <div className="divide-y divide-line rounded-lg border border-line">
+            {selected.map(({ product: p, qty: n }) => (
+              <div key={p.id} className="flex items-center gap-3 px-3 py-2 text-[13px]">
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{p.name}</span>
+                  <span className="text-xs text-muted nums">{p.barcode}</span>
+                </div>
+                <div className="flex items-center rounded-lg border border-line">
+                  <button onClick={() => bump(p.id, -1)} className="flex h-7 w-7 items-center justify-center text-ink-soft hover:text-ink">
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="w-8 text-center font-semibold nums">{n}</span>
+                  <button onClick={() => bump(p.id, 1)} className="flex h-7 w-7 items-center justify-center text-ink-soft hover:text-ink">
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+};

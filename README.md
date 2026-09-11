@@ -74,6 +74,9 @@ almacenamiento del sitio o ejecutá en la consola `localStorage.removeItem('kios
 - Alta/edición/baja de productos (baja lógica: no rompe el histórico).
 - Categoría, marca, proveedor, costo, venta, margen calculado, stock y alerta mínima.
 - Producto por unidad o **por peso (kg)**.
+- **Generar código interno** (EAN-13 válido, prefijo 20) para productos sin código.
+- **Etiquetas imprimibles**: elegís productos y cantidades, se imprime una hoja A4
+  con código de barras + nombre + precio.
 - **Compra a proveedor**: ingresa stock, actualiza el costo y, si queda en cuenta,
   suma a la deuda con ese proveedor.
 - **Actualización de precios por %** (para inflación), por categoría o a todo.
@@ -104,9 +107,15 @@ almacenamiento del sitio o ejecutá en la consola `localStorage.removeItem('kios
 - **Anular venta**: repone stock, revierte fiado y caja.
 - Exportación a CSV e impresión.
 
+### Roles (Configuración → PIN)
+- **Administrador**: ve todo. Con un PIN de admin la app pide clave al abrir.
+- **Vendedor**: PIN aparte; sólo ve el **punto de venta** (no accede a costos,
+  reportes, caja, inventario, fiado/proveedores ni configuración). Puede dar de
+  alta un cliente al vuelo para vender fiado.
+- Sin PIN de admin configurado la app queda abierta (todo visible).
+
 ### Extras
 - **PWA**: instalable en el celular/tablet, funciona sin conexión.
-- **PIN de acceso** opcional (Configuración → PIN).
 - **Impresión de ticket 58mm** para comandera térmica (botón "Ticket" tras cada venta).
 - **Backup / restore** de datos en JSON, y **subida del store local a la base central**
   (Configuración) para cuando se trabajó offline.

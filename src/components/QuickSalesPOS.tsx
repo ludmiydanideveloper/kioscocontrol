@@ -32,6 +32,7 @@ interface Props {
   onScanConsumed: () => void;
   onOpenScanner: () => void;
   onSaleCompleted: () => void;
+  onCustomersChanged: () => Promise<void>;
   onToast: (t: { message: string; type: 'info' | 'warning' | 'success' | 'error' }, ms?: number) => void;
 }
 
@@ -51,6 +52,7 @@ export const QuickSalesPOS: React.FC<Props> = ({
   onScanConsumed,
   onOpenScanner,
   onSaleCompleted,
+  onCustomersChanged,
   onToast,
 }) => {
   const [cart, setCart] = useState<SaleItem[]>([]);
@@ -155,6 +157,21 @@ export const QuickSalesPOS: React.FC<Props> = ({
       return [...prev, line];
     });
     setWeightProduct(null);
+  };
+
+  /** Alta rápida de cliente desde el POS (para vender fiado sin salir de acá). */
+  const handleQuickAddCustomer = async () => {
+    const name = window.prompt('Nombre del cliente');
+    if (name === null || !name.trim()) return;
+    const phone = window.prompt('Teléfono (opcional)', '') || '';
+    try {
+      const created = await db.saveCustomer({ name: name.trim(), phone: phone.trim() || null, balance: 0 });
+      await onCustomersChanged();
+      setCustomerId(created.id);
+      onToast({ message: `Cliente "${created.name}" creado`, type: 'success' });
+    } catch (err: any) {
+      onToast({ message: err.message || 'No se pudo crear el cliente', type: 'error' });
+    }
   };
 
   /** Agrega un ítem de monto libre (cigarrillo suelto, algo sin código, etc.). */
@@ -635,27 +652,34 @@ export const QuickSalesPOS: React.FC<Props> = ({
 
                   {paymentMethod === 'fiado' && (
                     <div className="space-y-1.5">
-                      {customers.length === 0 ? (
-                        <p className="text-[13px] text-danger">
-                          No hay clientes. Creá uno en la pestaña «Fiado».
+                      <div className="flex items-center gap-2">
+                        <Select
+                          value={customerId}
+                          onChange={(e) => setCustomerId(e.target.value)}
+                          className="flex-1"
+                        >
+                          <option value="">
+                            {customers.length === 0 ? 'Sin clientes cargados' : 'Elegí un cliente…'}
+                          </option>
+                          {customers.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                              {c.balance > 0 ? ` — debe ${money(c.balance)}` : ''}
+                            </option>
+                          ))}
+                        </Select>
+                        <button
+                          type="button"
+                          onClick={handleQuickAddCustomer}
+                          className="shrink-0 rounded-lg border border-line px-2.5 h-9 text-[13px] font-medium text-ink-soft hover:text-ink"
+                        >
+                          + Nuevo
+                        </button>
+                      </div>
+                      {selectedCustomer && (
+                        <p className="text-xs text-muted nums">
+                          Nueva deuda: {money(selectedCustomer.balance + cartTotal)}
                         </p>
-                      ) : (
-                        <>
-                          <Select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                            <option value="">Elegí un cliente…</option>
-                            {customers.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                                {c.balance > 0 ? ` — debe ${money(c.balance)}` : ''}
-                              </option>
-                            ))}
-                          </Select>
-                          {selectedCustomer && (
-                            <p className="text-xs text-muted nums">
-                              Nueva deuda: {money(selectedCustomer.balance + cartTotal)}
-                            </p>
-                          )}
-                        </>
                       )}
                     </div>
                   )}

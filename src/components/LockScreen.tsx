@@ -1,18 +1,18 @@
 import React, { useState } from 'react';
 import { Delete, Store } from 'lucide-react';
-import { verifyPin, markUnlocked } from '../utils/lock';
+import { login, cashierEnabled, type Role } from '../utils/auth';
 import { soundFX } from '../utils/audio';
 import { cx } from './ui';
 
-export const LockScreen: React.FC<{ onUnlock: () => void }> = ({ onUnlock }) => {
+export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnlock }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
 
   const tryUnlock = async (value: string) => {
-    if (await verifyPin(value)) {
+    const role = await login(value);
+    if (role) {
       soundFX.playBarcodeBeep();
-      markUnlocked();
-      onUnlock();
+      onUnlock(role);
     } else {
       soundFX.playErrorBuzz();
       setError(true);
@@ -33,7 +33,9 @@ export const LockScreen: React.FC<{ onUnlock: () => void }> = ({ onUnlock }) => 
         <Store className="h-6 w-6" strokeWidth={2} />
       </div>
       <h1 className="text-lg font-semibold tracking-tight">KioscoControl</h1>
-      <p className="mt-1 mb-7 text-[13px] text-muted">Ingresá tu PIN para continuar</p>
+      <p className="mt-1 mb-7 text-[13px] text-muted">
+        {cashierEnabled() ? 'Ingresá tu PIN (admin o vendedor)' : 'Ingresá tu PIN para continuar'}
+      </p>
 
       <div className="flex gap-2.5 mb-7 h-3">
         {Array.from({ length: Math.max(4, pin.length) }).map((_, i) => (

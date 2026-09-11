@@ -1,6 +1,13 @@
 import React, { useState, useRef } from 'react';
-import { Lock, Unlock, Download, Upload, ShieldCheck, HardDrive } from 'lucide-react';
-import { isPinSet, setPin, clearPin, verifyPin } from '../utils/lock';
+import { Lock, Download, Upload, ShieldCheck, HardDrive, ShoppingCart } from 'lucide-react';
+import {
+  authRequired,
+  cashierEnabled,
+  setupAdmin,
+  verifyAdmin,
+  disableAuth,
+  setCashierPin,
+} from '../utils/auth';
 import { exportData, downloadBackup, importLocalBackup } from '../utils/backup';
 import { getBusinessName, setBusinessName } from '../utils/printTicket';
 import { hasLocalData, migrateLocalToSupabase } from '../utils/db';
@@ -15,9 +22,11 @@ interface Props {
 }
 
 export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, onDataRestored }) => {
-  const [pinSet, setPinSet] = useState(isPinSet());
-  const [newPin, setNewPin] = useState('');
-  const [currentPin, setCurrentPin] = useState('');
+  const [adminSet, setAdminSet] = useState(authRequired());
+  const [cashierSet, setCashierSet] = useState(cashierEnabled());
+  const [adminPin, setAdminPin] = useState('');
+  const [disablePin, setDisablePin] = useState('');
+  const [cashierPin, setCashierPinInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [business, setBusiness] = useState(getBusinessName());
@@ -39,26 +48,50 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
     }
   };
 
-  const savePin = async () => {
-    if (!/^\d{4,8}$/.test(newPin)) {
+  const valid = (p: string) => /^\d{4,8}$/.test(p);
+
+  const saveAdmin = async () => {
+    if (!valid(adminPin)) {
       onToast({ message: 'El PIN debe tener entre 4 y 8 dígitos', type: 'warning' });
       return;
     }
-    await setPin(newPin);
-    setPinSet(true);
-    setNewPin('');
-    onToast({ message: 'PIN activado', type: 'success' });
-  };
-
-  const removePin = async () => {
-    if (!(await verifyPin(currentPin))) {
-      onToast({ message: 'PIN actual incorrecto', type: 'warning' });
+    if (adminSet && !(await verifyAdmin(disablePin))) {
+      onToast({ message: 'PIN de administrador actual incorrecto', type: 'warning' });
       return;
     }
-    clearPin();
-    setPinSet(false);
-    setCurrentPin('');
+    await setupAdmin(adminPin);
+    setAdminSet(true);
+    setAdminPin('');
+    setDisablePin('');
+    onToast({ message: 'PIN de administrador guardado', type: 'success' });
+  };
+
+  const removeAll = async () => {
+    if (!(await disableAuth(disablePin))) {
+      onToast({ message: 'PIN de administrador incorrecto', type: 'warning' });
+      return;
+    }
+    setAdminSet(false);
+    setCashierSet(false);
+    setDisablePin('');
     onToast({ message: 'PIN desactivado', type: 'info' });
+  };
+
+  const saveCashier = async () => {
+    if (!valid(cashierPin)) {
+      onToast({ message: 'El PIN de vendedor debe tener 4 a 8 dígitos', type: 'warning' });
+      return;
+    }
+    await setCashierPin(cashierPin);
+    setCashierSet(true);
+    setCashierPinInput('');
+    onToast({ message: 'PIN de vendedor guardado', type: 'success' });
+  };
+
+  const removeCashier = async () => {
+    await setCashierPin(null);
+    setCashierSet(false);
+    onToast({ message: 'Acceso de vendedor desactivado', type: 'info' });
   };
 
   const doExport = async () => {
@@ -146,41 +179,85 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
         </section>
 
         <section>
-          <Label>PIN de acceso</Label>
-          {!pinSet ? (
-            <div className="space-y-2">
-              <p className="text-xs text-muted">Pide un PIN al abrir la app. Se guarda sólo en este dispositivo.</p>
-              <Input
-                type="password"
-                inputMode="numeric"
-                value={newPin}
-                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="Nuevo PIN (4 a 8 dígitos)"
-                className="nums"
-              />
-              <Button variant="primary" className="w-full" onClick={savePin}>
-                <Lock className="h-3.5 w-3.5" strokeWidth={2} />
-                Activar PIN
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <p className="text-xs text-brand">PIN activo.</p>
-              <Input
-                type="password"
-                inputMode="numeric"
-                value={currentPin}
-                onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ''))}
-                placeholder="PIN actual para desactivar"
-                className="nums"
-              />
-              <Button variant="secondary" className="w-full" onClick={removePin}>
-                <Unlock className="h-3.5 w-3.5" strokeWidth={2} />
-                Desactivar PIN
-              </Button>
-            </div>
+          <Label>PIN de administrador</Label>
+          <p className="mb-2 text-xs text-muted">
+            El administrador ve todo. Sin PIN configurado, la app queda abierta.
+          </p>
+          {adminSet && (
+            <Input
+              type="password"
+              inputMode="numeric"
+              value={disablePin}
+              onChange={(e) => setDisablePin(e.target.value.replace(/\D/g, ''))}
+              placeholder="PIN de administrador actual"
+              className="nums mb-2"
+            />
+          )}
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              inputMode="numeric"
+              value={adminPin}
+              onChange={(e) => setAdminPin(e.target.value.replace(/\D/g, ''))}
+              placeholder={adminSet ? 'Nuevo PIN' : 'PIN (4 a 8 dígitos)'}
+              className="nums"
+            />
+            <Button variant="primary" onClick={saveAdmin}>
+              <Lock className="h-3.5 w-3.5" strokeWidth={2} />
+              {adminSet ? 'Cambiar' : 'Activar'}
+            </Button>
+          </div>
+          {adminSet && (
+            <Button variant="ghost" className="mt-2 w-full" onClick={removeAll}>
+              Desactivar todos los PIN
+            </Button>
           )}
         </section>
+
+        {adminSet && (
+          <section>
+            <Label>PIN de vendedor</Label>
+            <p className="mb-2 text-xs text-muted">
+              El vendedor sólo ve el punto de venta: no accede a costos, reportes, caja ni configuración.
+            </p>
+            {!cashierSet ? (
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  inputMode="numeric"
+                  value={cashierPin}
+                  onChange={(e) => setCashierPinInput(e.target.value.replace(/\D/g, ''))}
+                  placeholder="PIN de vendedor"
+                  className="nums"
+                />
+                <Button variant="primary" onClick={saveCashier}>
+                  <ShoppingCart className="h-3.5 w-3.5" strokeWidth={2} />
+                  Activar
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-brand">Acceso de vendedor activo.</p>
+                <div className="flex gap-2">
+                  <Input
+                    type="password"
+                    inputMode="numeric"
+                    value={cashierPin}
+                    onChange={(e) => setCashierPinInput(e.target.value.replace(/\D/g, ''))}
+                    placeholder="Cambiar PIN de vendedor"
+                    className="nums"
+                  />
+                  <Button variant="secondary" onClick={saveCashier}>
+                    Cambiar
+                  </Button>
+                </div>
+                <Button variant="ghost" className="w-full" onClick={removeCashier}>
+                  Desactivar acceso de vendedor
+                </Button>
+              </div>
+            )}
+          </section>
+        )}
 
         <section>
           <Label>Copia de seguridad</Label>
