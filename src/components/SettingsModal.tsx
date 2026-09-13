@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Lock, Download, Upload, ShieldCheck, HardDrive, ShoppingCart, KeyRound } from 'lucide-react';
+import { Lock, Download, Upload, ShieldCheck, HardDrive, ShoppingCart } from 'lucide-react';
 import {
   authRequired,
   cashierEnabled,
@@ -7,14 +7,13 @@ import {
   verifyAdmin,
   disableAuth,
   setCashierPin,
-  setCashierActive,
-  cashierAccountExists,
   isRealAuth,
 } from '../utils/auth';
 import { exportData, downloadBackup, importLocalBackup } from '../utils/backup';
 import { getBusinessName, setBusinessName } from '../utils/printTicket';
 import { hasLocalData, migrateLocalToSupabase } from '../utils/db';
 import type { BackendMode } from '../utils/db';
+import { EmployeesPanel } from './EmployeesPanel';
 import { Modal, Button, Input, Label, cx } from './ui';
 
 interface Props {
@@ -32,8 +31,6 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
   const [adminPin, setAdminPin] = useState('');
   const [disablePin, setDisablePin] = useState('');
   const [cashierPin, setCashierPinInput] = useState('');
-  const [cashierAdminConfirm, setCashierAdminConfirm] = useState('');
-  const [cashierExists, setCashierExists] = useState(false);
   const [busy, setBusy] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [business, setBusiness] = useState(getBusinessName());
@@ -44,7 +41,6 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
   useEffect(() => {
     authRequired().then(setAdminSet);
     cashierEnabled().then(setCashierSet);
-    cashierAccountExists().then(setCashierExists);
   }, []);
 
   const doMigrate = async () => {
@@ -100,21 +96,17 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
     onAuthChanged();
   };
 
+  // Sólo modo local (en Supabase, los empleados se manejan desde EmployeesPanel).
   const saveCashier = async () => {
     if (!valid(cashierPin)) {
       onToast({ message: `El PIN de vendedor debe tener ${minPinLen} a 8 dígitos`, type: 'warning' });
       return;
     }
-    if (realAuth && !cashierSet && !cashierAdminConfirm) {
-      onToast({ message: 'Confirmá con tu PIN de administrador actual', type: 'warning' });
-      return;
-    }
     try {
       setBusy(true);
-      await setCashierPin(cashierPin, cashierAdminConfirm || undefined);
+      await setCashierPin(cashierPin);
       setCashierSet(true);
       setCashierPinInput('');
-      setCashierAdminConfirm('');
       onToast({ message: 'PIN de vendedor guardado', type: 'success' });
     } catch (err: any) {
       onToast({ message: err.message || 'No se pudo guardar el PIN', type: 'error' }, 7000);
@@ -126,28 +118,11 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
   const removeCashier = async () => {
     try {
       setBusy(true);
-      if (realAuth) {
-        await setCashierActive(false);
-      } else {
-        await setCashierPin(null);
-      }
+      await setCashierPin(null);
       setCashierSet(false);
       onToast({ message: 'Acceso de vendedor desactivado', type: 'info' });
     } catch (err: any) {
       onToast({ message: err.message || 'No se pudo desactivar', type: 'error' });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const reactivateCashier = async () => {
-    try {
-      setBusy(true);
-      await setCashierActive(true);
-      setCashierSet(true);
-      onToast({ message: 'Acceso de vendedor reactivado', type: 'success' });
-    } catch (err: any) {
-      onToast({ message: err.message || 'No se pudo reactivar', type: 'error' });
     } finally {
       setBusy(false);
     }
@@ -281,71 +256,50 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
           )}
         </section>
 
-        {adminSet && (
+        {adminSet && realAuth && (
+          <section>
+            <Label>Empleados</Label>
+            <EmployeesPanel onToast={onToast} />
+          </section>
+        )}
+
+        {adminSet && !realAuth && (
           <section>
             <Label>PIN de vendedor</Label>
             <p className="mb-2 text-xs text-muted">
               El vendedor sólo ve el punto de venta: no accede a costos, reportes, caja ni configuración.
             </p>
             {!cashierSet ? (
-              realAuth && cashierExists ? (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted">Hay una cuenta de vendedor creada, pero está desactivada.</p>
-                  <Button variant="primary" className="w-full" onClick={reactivateCashier} disabled={busy}>
-                    <ShoppingCart className="h-3.5 w-3.5" strokeWidth={2} />
-                    Reactivar acceso de vendedor
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-2">
+              <div className="space-y-2">
+                <Input
+                  type="password"
+                  inputMode="numeric"
+                  value={cashierPin}
+                  onChange={(e) => setCashierPinInput(e.target.value.replace(/\D/g, ''))}
+                  placeholder={`PIN de vendedor (${minPinLen} a 8 dígitos)`}
+                  className="nums"
+                />
+                <Button variant="primary" className="w-full" onClick={saveCashier} disabled={busy}>
+                  <ShoppingCart className="h-3.5 w-3.5" strokeWidth={2} />
+                  Activar
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-brand">Acceso de vendedor activo.</p>
+                <div className="flex gap-2">
                   <Input
                     type="password"
                     inputMode="numeric"
                     value={cashierPin}
                     onChange={(e) => setCashierPinInput(e.target.value.replace(/\D/g, ''))}
-                    placeholder={`PIN de vendedor (${minPinLen} a 8 dígitos)`}
+                    placeholder="Cambiar PIN de vendedor"
                     className="nums"
                   />
-                  {realAuth && (
-                    <Input
-                      type="password"
-                      inputMode="numeric"
-                      value={cashierAdminConfirm}
-                      onChange={(e) => setCashierAdminConfirm(e.target.value.replace(/\D/g, ''))}
-                      placeholder="Confirmá con tu PIN de administrador"
-                      className="nums"
-                    />
-                  )}
-                  <Button variant="primary" className="w-full" onClick={saveCashier} disabled={busy}>
-                    <ShoppingCart className="h-3.5 w-3.5" strokeWidth={2} />
-                    Activar
+                  <Button variant="secondary" onClick={saveCashier} disabled={busy}>
+                    Cambiar
                   </Button>
                 </div>
-              )
-            ) : (
-              <div className="space-y-2">
-                <p className="text-xs text-brand">Acceso de vendedor activo.</p>
-                {!realAuth && (
-                  <div className="flex gap-2">
-                    <Input
-                      type="password"
-                      inputMode="numeric"
-                      value={cashierPin}
-                      onChange={(e) => setCashierPinInput(e.target.value.replace(/\D/g, ''))}
-                      placeholder="Cambiar PIN de vendedor"
-                      className="nums"
-                    />
-                    <Button variant="secondary" onClick={saveCashier} disabled={busy}>
-                      Cambiar
-                    </Button>
-                  </div>
-                )}
-                {realAuth && (
-                  <p className="flex items-start gap-1.5 text-xs text-muted">
-                    <KeyRound className="h-3.5 w-3.5 shrink-0 mt-0.5" strokeWidth={2} />
-                    El vendedor cambia su propio PIN desde el punto de venta (no vos).
-                  </p>
-                )}
                 <Button variant="ghost" className="w-full" onClick={removeCashier} disabled={busy}>
                   Desactivar acceso de vendedor
                 </Button>

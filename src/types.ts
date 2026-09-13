@@ -283,3 +283,32 @@ export interface ReportSummary {
     count: number;
   }[];
 }
+
+// ----------------------------------------------------------------------------
+// Empleados (modo Supabase, multi-tenant): además del punto de venta (siempre
+// disponible), el admin puede habilitarle a cada empleado el resto de las
+// pestañas una por una.
+// ----------------------------------------------------------------------------
+export interface EmployeePermissions {
+  inventory?: boolean;
+  customers?: boolean;
+  suppliers?: boolean;
+  cash?: boolean;
+  reports?: boolean;
+}
+
+export const PERMISSION_LABELS: Record<keyof EmployeePermissions, string> = {
+  inventory: 'Inventario',
+  customers: 'Fiado',
+  suppliers: 'Proveedores',
+  cash: 'Caja',
+  reports: 'Reportes',
+};
+
+export interface Employee {
+  id: string;
+  email: string | null;
+  name: string | null;
+  active: boolean;
+  permissions: EmployeePermissions;
+}

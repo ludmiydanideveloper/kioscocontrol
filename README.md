@@ -86,17 +86,19 @@ varios negocios distintos, cada uno viendo sólo sus propios productos, ventas,
 clientes, etc. Cada dispositivo "recuerda" a qué kiosco pertenece (guardado en
 el navegador); por defecto es el kiosco original, sin nada que configurar.
 
-**Dar de alta un kiosco nuevo** (vos, como dueño de la plataforma):
+**Alta de un kiosco nuevo — el dueño se registra solo** (camino normal): en la
+pantalla de login, "¿No tenés cuenta? Creá tu kiosco" — pone el nombre de su
+negocio, elige un código único, y su email/contraseña reales. Queda como
+administrador de un negocio nuevo, aislado del resto, sin que vos tengas que
+hacer nada ni ver su contraseña.
 
-1. Abrí [`onboard-tenant.sql`](onboard-tenant.sql), completá el slug y el
-   nombre del negocio, y corrélo en el SQL Editor de Supabase. Es un solo
-   `insert` — no hace falta crear nada más a mano.
-2. Pasále al dueño del negocio el link de la app y el código (slug) que
-   elegiste. Desde la pantalla de PIN, toca **"¿Es otro kiosco? Cambiar"**,
-   pone el código y confirma — a partir de ahí la app queda "abierta" para
-   ESE kiosco (sin admin todavía) y activa su propio PIN de administrador
-   desde Configuración, exactamente igual que en el kiosco original. Vos
-   nunca ves ni elegís su PIN.
+**Alternativa — vos reservás el código de antemano** (por si querés avisarle
+a alguien con un link/código ya armado): abrí [`onboard-tenant.sql`](onboard-tenant.sql),
+completá el slug y el nombre, y corré ese `insert` en el SQL Editor. El dueño
+igual se activa su propio PIN de administrador desde la app (toca **"¿Es otro
+kiosco? Cambiar"**, pone el código, y en Configuración activa su PIN) — esta
+vía es sólo para el kiosco original de este proyecto o si preferís PIN en vez
+de email+contraseña para ese negocio en particular.
 
 Los datos de cada negocio están completamente aislados a nivel de base de
 datos (no es sólo un filtro en la interfaz): las políticas RLS de
@@ -155,18 +157,24 @@ escribir datos de otro kiosco.
 - **Anular venta**: repone stock, revierte fiado y caja.
 - Exportación a CSV e impresión.
 
-### Roles (Configuración → PIN)
-- **Administrador**: ve todo. Con un PIN de admin la app pide clave al abrir.
-- **Vendedor**: PIN aparte; sólo ve el **punto de venta** (no accede a costos,
-  reportes, caja, inventario, fiado/proveedores ni configuración). Puede dar de
-  alta un cliente al vuelo para vender fiado. Cambia su propio PIN desde el
-  punto de venta (ícono de llave junto a "Cerrar sesión").
-- Sin PIN de admin configurado la app queda abierta (todo visible) — sólo
-  aplica en modo local o antes del primer setup en Supabase.
-- **En modo Supabase el login es real** (Supabase Auth, dos cuentas fijas) y
-  las políticas RLS lo exigen del lado del servidor, no sólo en la interfaz:
-  ni con la anon key expuesta en el bundle se puede leer o escribir nada sin
-  sesión, y las tablas de proveedores/gastos/compras sólo las toca el admin.
+### Roles (Configuración)
+- **Administrador**: ve todo. En modo Supabase se registra con **su email y
+  contraseña reales** (botón "¿No tenés cuenta? Creá tu kiosco" en la pantalla
+  de login) o —para el kiosco original de este proyecto— con un PIN. Con
+  sesión iniciada, siempre pide login al volver a abrir la app.
+- **Empleados**: el admin los da de alta desde **Configuración → Empleados**
+  (nombre + PIN); cada uno entra sólo con su PIN, nunca con email. Por
+  defecto sólo ven el **punto de venta**; el admin puede habilitarles, una
+  por una, el resto de las pestañas (Inventario, Fiado, Proveedores, Caja,
+  Reportes) — Configuración nunca es delegable. Cada empleado cambia su
+  propio PIN desde el punto de venta (ícono de llave); ni el admin puede
+  vérselo o resetéarselo sin que él lo sepa.
+- Sin admin configurado la app queda abierta (todo visible) — sólo aplica en
+  modo local o antes del primer setup en Supabase.
+- **En modo Supabase el login es real** (Supabase Auth) y las políticas RLS
+  lo exigen del lado del servidor, no sólo en la interfaz: ni con la anon key
+  expuesta en el bundle se puede leer o escribir nada sin sesión, y las
+  tablas de proveedores/gastos/compras sólo las toca el admin de ese negocio.
   En modo local el PIN es sólo un hash en el navegador (disuade, no protege).
 
 ### Extras

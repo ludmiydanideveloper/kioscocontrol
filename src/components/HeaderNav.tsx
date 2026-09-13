@@ -30,6 +30,7 @@ export type NavTab =
 interface HeaderNavProps {
   currentTab: NavTab;
   onTabChange: (tab: NavTab) => void;
+  visibleTabs: NavTab[];
   role: Role | null;
   lowStockCount: number;
   outOfStockCount: number;
@@ -57,6 +58,7 @@ const TABS: { id: NavTab; label: string; icon: React.ElementType }[] = [
 export const HeaderNav: React.FC<HeaderNavProps> = ({
   currentTab,
   onTabChange,
+  visibleTabs,
   role,
   lowStockCount,
   outOfStockCount,
@@ -72,7 +74,9 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
 }) => {
   const totalAlerts = lowStockCount + outOfStockCount;
   const isCashier = role === 'cashier';
-  const tabs = isCashier ? [] : TABS;
+  const visible = new Set(visibleTabs);
+  // Un empleado que sólo puede vender no necesita elegir entre pestañas.
+  const tabs = visibleTabs.length > 1 ? TABS.filter((t) => visible.has(t.id)) : [];
 
   const dot = (id: NavTab): { count?: number; tone: string } | null => {
     if (id === 'alerts' && totalAlerts > 0) return { count: totalAlerts, tone: 'bg-danger' };

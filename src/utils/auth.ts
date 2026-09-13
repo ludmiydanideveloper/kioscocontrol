@@ -18,6 +18,7 @@
 // ============================================================================
 import { supabase } from './supabase';
 import { getBackendMode } from './db';
+import type { Employee, EmployeePermissions } from '../types';
 
 export type Role = 'admin' | 'cashier';
 
@@ -163,10 +164,20 @@ const localAuth = {
 // ---------------------------------------------------------------------------
 // Modo Supabase — Supabase Auth real + tabla `profiles`, multi-tenant
 // ---------------------------------------------------------------------------
-async function getProfile(uid: string): Promise<{ role: Role; active: boolean } | null> {
-  const { data, error } = await supabase.from('profiles').select('role,active').eq('id', uid).maybeSingle();
+interface ProfileRow {
+  role: Role;
+  active: boolean;
+  name: string | null;
+  permissions: EmployeePermissions;
+}
+async function getProfile(uid: string): Promise<ProfileRow | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('role,active,name,permissions')
+    .eq('id', uid)
+    .maybeSingle();
   if (error || !data) return null;
-  return data as { role: Role; active: boolean };
+  return { ...data, permissions: data.permissions || {} } as ProfileRow;
 }
 
 /** Estado del tenant activo en este dispositivo (según getTenantSlug()). */
@@ -346,11 +357,17 @@ const supaAuth = {
       if (prof?.role === 'admin' && prof.active) return 'admin';
       await supabase.auth.signOut();
     }
-    ({ data, error } = await supabase.auth.signInWithPassword({ email: cashierEmail(), password: pin }));
-    if (!error && data.session) {
-      const prof = await getProfile(data.user!.id);
-      if (prof?.role === 'cashier' && prof.active) return 'cashier';
-      await supabase.auth.signOut();
+    // Empleados: probamos el PIN contra cada cuenta activa de este kiosco
+    // (incluye la vieja "vendedor@..." si existe — es una fila de profiles más).
+    const tenantId = getTenantSlug() || 'default';
+    const { data: candidates } = await supabase.rpc('list_login_emails', { p_tenant_id: tenantId });
+    for (const row of (candidates as { email: string }[] | null) || []) {
+      ({ data, error } = await supabase.auth.signInWithPassword({ email: row.email, password: pin }));
+      if (!error && data.session) {
+        const prof = await getProfile(data.user!.id);
+        if (prof?.role === 'cashier' && prof.active) return 'cashier';
+        await supabase.auth.signOut();
+      }
     }
     return null;
   },
@@ -378,6 +395,119 @@ const supaAuth = {
     if (error) throw new Error(error.message);
   },
 };
+
+// ---------------------------------------------------------------------------
+// Alta de kiosco por email real + panel de empleados (sólo modo Supabase).
+// ---------------------------------------------------------------------------
+
+/** Registra al dueño con SU email real y crea su negocio. */
+export async function ownerSignUp(
+  email: string,
+  password: string,
+  slug: string,
+  businessName: string,
+): Promise<void> {
+  if (getBackendMode() !== 'supabase') throw new Error('No disponible en modo local');
+  if (password.length < 6) throw new Error('La contraseña debe tener al menos 6 caracteres');
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw new Error(error.message);
+  if (!data.session) {
+    throw new Error('Revisá tu email para confirmar la cuenta antes de continuar.');
+  }
+  const { error: e2 } = await supabase.rpc('create_tenant', { p_slug: slug, p_name: businessName });
+  if (e2) {
+    await supabase.auth.signOut().catch(() => {});
+    throw new Error(e2.message);
+  }
+  setTenantSlug(slug);
+}
+
+/** Login del dueño con su email y contraseña reales. */
+export async function ownerLogin(email: string, password: string): Promise<Role | null> {
+  if (getBackendMode() !== 'supabase') throw new Error('No disponible en modo local');
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error || !data.session) return null;
+  const prof = await getProfile(data.user!.id);
+  if (!prof || !prof.active) {
+    await supabase.auth.signOut();
+    return null;
+  }
+  return prof.role;
+}
+
+/**
+ * Da de alta un empleado nuevo (nombre + PIN). Por dentro crea una cuenta
+ * real de Supabase Auth con un email al azar que el empleado nunca ve; eso
+ * cambia la sesión activa al empleado nuevo, así que hace falta la
+ * contraseña/PIN ACTUAL del admin para volver a entrar como admin al terminar.
+ */
+export async function createEmployee(name: string, pin: string, adminCurrentPassword: string): Promise<void> {
+  if (getBackendMode() !== 'supabase') throw new Error('No disponible en modo local');
+  if (pin.length < 6) throw new Error('El PIN debe tener al menos 6 dígitos');
+  if (!adminCurrentPassword) throw new Error('Falta confirmar con tu contraseña/PIN actual');
+  const { data: cur } = await supabase.auth.getSession();
+  const adminEm = cur.session?.user.email;
+  if (!adminEm) throw new Error('Iniciá sesión como administrador primero');
+
+  const slug = getTenantSlug();
+  const local = 'emp' + Math.random().toString(36).slice(2, 10);
+  const empEmail = slug ? `${local}@${slug}.${EMAIL_DOMAIN}` : `${local}@${EMAIL_DOMAIN}`;
+
+  const { data, error } = await supabase.auth.signUp({ email: empEmail, password: pin });
+  if (error) {
+    await supabase.auth.signInWithPassword({ email: adminEm, password: adminCurrentPassword }).catch(() => {});
+    throw new Error(error.message);
+  }
+  try {
+    if (!data.session) {
+      throw new Error(
+        'No se pudo crear la cuenta. Revisá que "Confirm email" esté desactivado en Supabase → Authentication → Providers → Email.',
+      );
+    }
+    const { error: e2 } = await supabase.rpc('claim_employee', { p_name: name });
+    if (e2) throw new Error(e2.message);
+  } finally {
+    const { error: e3 } = await supabase.auth.signInWithPassword({ email: adminEm, password: adminCurrentPassword });
+    if (e3) throw new Error('Empleado creado, pero no se pudo restaurar tu sesión: ' + e3.message);
+  }
+}
+
+/** Lista los empleados del negocio activo (RLS los acota solo, sin filtro explícito). */
+export async function listEmployees(): Promise<Employee[]> {
+  if (getBackendMode() !== 'supabase') return [];
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('id,email,name,active,permissions')
+    .eq('role', 'cashier')
+    .order('createdAt', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data || []).map((r) => ({ ...r, permissions: r.permissions || {} })) as Employee[];
+}
+
+/** Edita nombre/permisos/activo de un empleado del negocio propio. */
+export async function updateEmployee(
+  id: string,
+  name: string,
+  permissions: EmployeePermissions,
+  active: boolean,
+): Promise<void> {
+  const { error } = await supabase.rpc('set_employee_permissions', {
+    p_employee_id: id,
+    p_name: name,
+    p_permissions: permissions,
+    p_active: active,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** Permisos del usuario logueado (para que la interfaz sepa qué pestañas mostrarle). */
+export async function getMyPermissions(): Promise<EmployeePermissions> {
+  if (getBackendMode() !== 'supabase') return {};
+  const { data } = await supabase.auth.getSession();
+  if (!data.session) return {};
+  const prof = await getProfile(data.session.user.id);
+  return prof?.permissions || {};
+}
 
 // ---------------------------------------------------------------------------
 // Dispatch según backend activo

@@ -320,6 +320,10 @@ create table if not exists public.profiles (
 alter table public.profiles add column if not exists "tenantId" text references public.tenants(id) on delete cascade;
 update public.profiles set "tenantId" = 'default' where "tenantId" is null;
 alter table public.profiles alter column "tenantId" set not null;
+alter table public.profiles add column if not exists email text;
+alter table public.profiles add column if not exists name text;
+alter table public.profiles add column if not exists permissions jsonb not null default '{}'::jsonb;
+update public.profiles p set email = u.email from auth.users u where p.id = u.id and p.email is null;
 
 -- Tabla vieja (previa a multi-tenant), ya no se usa — se deja como está por
 -- si alguna versión anterior todavía la referencia; el estado real ahora
@@ -420,6 +424,113 @@ begin
 end;
 $$;
 grant execute on function public.set_cashier_active(boolean) to authenticated;
+
+-- ============================================================================
+-- Alta de kiosco por email real (self-service) + panel de empleados.
+-- El dueño se registra con SU email real (no uno sintético) y elige el slug
+-- de su negocio; queda como admin de ese tenant nuevo. Los empleados los da
+-- de alta el admin desde el panel (nombre + PIN + permisos por pestaña); por
+-- dentro siguen siendo una cuenta real de Supabase Auth con un email
+-- sintético al azar (el empleado nunca lo ve ni lo necesita, entra con PIN).
+-- ============================================================================
+
+-- Crea un negocio nuevo y deja al usuario autenticado (ya logueado con su
+-- email real) como su administrador. Se usa una sola vez, justo después de
+-- registrarse.
+create or replace function public.create_tenant(p_slug text, p_name text)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_slug text := lower(regexp_replace(coalesce(p_slug, ''), '[^a-z0-9-]', '', 'g'));
+  v_name text := trim(coalesce(p_name, ''));
+begin
+  if auth.uid() is null then raise exception 'No autenticado'; end if;
+  if v_slug = '' or v_slug = 'default' then raise exception 'Código de kiosco inválido'; end if;
+  if v_name = '' then raise exception 'Falta el nombre del kiosco'; end if;
+  if exists (select 1 from public.profiles where id = auth.uid()) then
+    raise exception 'Esta cuenta ya pertenece a un kiosco';
+  end if;
+  if exists (select 1 from public.tenants where id = v_slug) then
+    raise exception 'Ese código ya está en uso, probá con otro';
+  end if;
+
+  insert into public.tenants (id, slug, name, admin_configured)
+  values (v_slug, v_slug, v_name, true);
+
+  insert into public.profiles (id, role, active, "tenantId", email)
+  values (auth.uid(), 'admin', true, v_slug, (select email from auth.users where id = auth.uid()));
+end;
+$$;
+revoke all on function public.create_tenant(text, text) from public, anon;
+grant execute on function public.create_tenant(text, text) to authenticated;
+
+-- Vincula la cuenta recién creada (email sintético al azar, dado de alta por
+-- un admin) como empleado del tenant al que pertenece ESE email —
+-- <lo-que-sea>@<slug>.kioscocontrol.local, igual que claim_role(). El tenant
+-- sale del propio email autenticado, nunca de un parámetro que mande el
+-- cliente, así nadie puede "colarse" como empleado de un negocio ajeno
+-- aunque conozca su id.
+create or replace function public.claim_employee(p_name text)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_email  text;
+  v_domain text;
+  v_slug   text;
+  v_tenant public.tenants%rowtype;
+begin
+  select email into v_email from auth.users where id = auth.uid();
+  if v_email is null then raise exception 'No autenticado'; end if;
+
+  v_domain := lower(split_part(v_email, '@', 2));
+  if v_domain = 'kioscocontrol.local' then
+    select * into v_tenant from public.tenants where id = 'default';
+  elsif v_domain like '%.kioscocontrol.local' then
+    v_slug := left(v_domain, length(v_domain) - length('.kioscocontrol.local'));
+    select * into v_tenant from public.tenants where slug = v_slug and active;
+  end if;
+  if v_tenant.id is null or not v_tenant.admin_configured then
+    raise exception 'Kiosco desconocido';
+  end if;
+
+  insert into public.profiles (id, role, active, "tenantId", email, name)
+  values (auth.uid(), 'cashier', true, v_tenant.id, v_email, nullif(trim(p_name), ''))
+  on conflict (id) do update
+    set role = 'cashier', active = true, "tenantId" = excluded."tenantId", name = excluded.name;
+end;
+$$;
+grant execute on function public.claim_employee(text) to authenticated;
+
+-- El admin edita nombre/permisos/activo de un empleado de su propio tenant.
+create or replace function public.set_employee_permissions(
+  p_employee_id uuid, p_name text, p_permissions jsonb, p_active boolean
+)
+returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Sólo el administrador puede hacer esto'; end if;
+  update public.profiles
+     set name = nullif(trim(p_name), ''),
+         permissions = coalesce(p_permissions, '{}'::jsonb),
+         active = p_active
+   where id = p_employee_id and role = 'cashier' and "tenantId" = public.current_tenant_id();
+  if not found then raise exception 'Empleado no encontrado'; end if;
+end;
+$$;
+grant execute on function public.set_employee_permissions(uuid, text, jsonb, boolean) to authenticated;
+
+-- Emails de login válidos para el kiosco `p_tenant_id` (sólo empleados
+-- activos — el admin no entra por acá, usa email+contraseña reales). Lo usa
+-- la pantalla de PIN, antes de autenticar, para saber contra qué cuentas
+-- probar el PIN que tipeó alguien.
+create or replace function public.list_login_emails(p_tenant_id text)
+returns table(email text)
+language sql security definer stable set search_path = public as $$
+  select email from public.profiles
+   where "tenantId" = p_tenant_id and role = 'cashier' and active and email is not null
+   limit 20;
+$$;
+grant execute on function public.list_login_emails(text) to authenticated, anon;
 
 alter table public.profiles enable row level security;
 drop policy if exists profiles_select on public.profiles;

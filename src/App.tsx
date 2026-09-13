@@ -9,12 +9,12 @@ import { CashRegister } from './components/CashRegister';
 import { LockScreen } from './components/LockScreen';
 import { SettingsModal } from './components/SettingsModal';
 import { ChangePinModal } from './components/ChangePinModal';
-import { Product, Customer, Supplier, CashSession } from './types';
+import { Product, Customer, Supplier, CashSession, EmployeePermissions } from './types';
 import { soundFX } from './utils/audio';
 import { supabase } from './utils/supabase';
 import * as db from './utils/db';
 import type { BackendMode } from './utils/db';
-import { currentRole, authRequired, logout, isRealAuth, type Role } from './utils/auth';
+import { currentRole, authRequired, logout, isRealAuth, getMyPermissions, type Role } from './utils/auth';
 import { AlertCircle, WifiOff } from 'lucide-react';
 
 const ReportsView = lazy(() =>
@@ -25,6 +25,19 @@ const BarcodeScannerModal = lazy(() =>
 );
 
 type Toast = { message: string; type: 'info' | 'warning' | 'success' | 'error' };
+
+const NAV_TABS: NavTab[] = ['pos', 'alerts', 'inventory', 'customers', 'suppliers', 'cash', 'reports'];
+
+// Qué permiso del empleado habilita cada pestaña (además de "Vender", siempre
+// disponible). "alerts" va con inventario porque son alertas de stock.
+const TAB_PERMISSION: Partial<Record<NavTab, keyof EmployeePermissions>> = {
+  alerts: 'inventory',
+  inventory: 'inventory',
+  customers: 'customers',
+  suppliers: 'suppliers',
+  cash: 'cash',
+  reports: 'reports',
+};
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('pos');
@@ -45,6 +58,7 @@ export default function App() {
   const scanCounter = useRef(0);
 
   const [role, setRole] = useState<Role | null>(null);
+  const [permissions, setPermissions] = useState<EmployeePermissions>({});
   const [authChecked, setAuthChecked] = useState(false);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [authEnabled, setAuthEnabled] = useState(false);
@@ -119,6 +133,7 @@ export default function App() {
   const refreshAuthState = useCallback(async () => {
     const existingRole = await currentRole();
     setRole(existingRole);
+    setPermissions(existingRole === 'cashier' ? await getMyPermissions() : {});
     const authIsOn = await authRequired();
     setAuthEnabled(authIsOn);
     return existingRole;
@@ -157,6 +172,8 @@ export default function App() {
 
   const handleUnlock = async (unlockedRole: Role) => {
     setRole(unlockedRole);
+    setPermissions(unlockedRole === 'cashier' ? await getMyPermissions() : {});
+    setAuthEnabled(true);
     setNeedsAuth(false);
     setIsLoading(true);
     await loadAppData(backendMode);
@@ -165,6 +182,7 @@ export default function App() {
   const handleLogout = async () => {
     await logout();
     setRole(null);
+    setPermissions({});
     if (realtimeChannelRef.current) {
       supabase.removeChannel(realtimeChannelRef.current);
       realtimeChannelRef.current = null;
@@ -282,13 +300,21 @@ export default function App() {
   }
   if (needsAuth) return <LockScreen onUnlock={handleUnlock} />;
 
-  const activeTab: NavTab = isCashier ? 'pos' : currentTab;
+  const canAccess = (tab: NavTab): boolean => {
+    if (!isCashier) return true;
+    if (tab === 'pos') return true;
+    const key = TAB_PERMISSION[tab];
+    return key ? !!permissions[key] : false;
+  };
+  const activeTab: NavTab = canAccess(currentTab) ? currentTab : 'pos';
+  const visibleTabs = isCashier ? NAV_TABS.filter((t) => canAccess(t)) : NAV_TABS;
 
   return (
     <div className="min-h-screen bg-canvas text-ink flex flex-col">
       <HeaderNav
         currentTab={activeTab}
         onTabChange={setCurrentTab}
+        visibleTabs={visibleTabs}
         role={role}
         lowStockCount={lowStockCount}
         outOfStockCount={outOfStockCount}

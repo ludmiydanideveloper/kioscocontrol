@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Delete, Store, Building2 } from 'lucide-react';
+import { Delete, Store, Building2, Mail } from 'lucide-react';
 import {
   login,
   cashierEnabled,
@@ -7,34 +7,43 @@ import {
   setTenantSlug,
   tenantSlugExists,
   getTenantName,
+  ownerLogin,
+  ownerSignUp,
   type Role,
 } from '../utils/auth';
 import { getBackendMode } from '../utils/db';
 import { soundFX } from '../utils/audio';
 import { cx, Input, Button } from './ui';
 
-const isMultiTenant = getBackendMode() === 'supabase';
+const slugify = (s: string) =>
+  s
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+
+type Mode = 'pin' | 'switch' | 'owner-login' | 'signup';
 
 export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnlock }) => {
+  const [mode, setMode] = useState<Mode>('pin');
+
+  // ---- PIN pad ----
   // Calculado al renderizar (no al importar el módulo): para cuando esta
   // pantalla se muestra, App ya esperó a que initBackend() elija el modo real.
-  // En modo Supabase el PIN es la contraseña de una cuenta real (mínimo 6).
   const [minPinLen] = useState(() => (getBackendMode() === 'supabase' ? 6 : 4));
+  const [isMultiTenant] = useState(() => getBackendMode() === 'supabase');
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
   const [checking, setChecking] = useState(false);
   const [hasCashier, setHasCashier] = useState(false);
   const [tenantName, setTenantName] = useState<string | null>(null);
 
-  const [switching, setSwitching] = useState(false);
-  const [slugInput, setSlugInput] = useState(getTenantSlug() || '');
-  const [slugError, setSlugError] = useState('');
-
   const refreshTenantInfo = () => {
     cashierEnabled().then(setHasCashier);
     if (isMultiTenant) getTenantName().then(setTenantName);
   };
-
   useEffect(refreshTenantInfo, []);
 
   const tryUnlock = async (value: string) => {
@@ -64,6 +73,10 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
     });
   };
 
+  // ---- Cambiar de negocio ----
+  const [slugInput, setSlugInput] = useState(getTenantSlug() || '');
+  const [slugError, setSlugError] = useState('');
+
   const confirmSwitch = async () => {
     setSlugError('');
     const ok = await tenantSlugExists(slugInput);
@@ -74,37 +87,177 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
     setTenantSlug(slugInput);
     setPin('');
     setError(false);
-    setSwitching(false);
+    setMode('pin');
     refreshTenantInfo();
   };
 
-  if (switching) {
-    return (
-      <div className="fixed inset-0 z-[100] bg-canvas flex flex-col items-center justify-center p-6">
-        <div className="h-12 w-12 rounded-xl bg-ink text-white flex items-center justify-center mb-4">
-          <Building2 className="h-6 w-6" strokeWidth={2} />
-        </div>
-        <h1 className="text-lg font-semibold tracking-tight mb-1">Elegí tu kiosco</h1>
-        <p className="mb-5 text-[13px] text-muted text-center max-w-[280px]">
-          Escribí el código que te dio el dueño del negocio. Dejalo vacío para el kiosco original de este equipo.
-        </p>
-        <div className="w-full max-w-[280px] space-y-3">
-          <Input
-            autoFocus
-            value={slugInput}
-            onChange={(e) => setSlugInput(e.target.value)}
-            placeholder="código del kiosco (opcional)"
-            onKeyDown={(e) => e.key === 'Enter' && confirmSwitch()}
-          />
-          {slugError && <p className="text-[13px] font-medium text-danger">{slugError}</p>}
-          <Button variant="primary" className="w-full" onClick={confirmSwitch}>
-            Continuar
-          </Button>
-          <Button variant="ghost" className="w-full" onClick={() => setSwitching(false)}>
-            Cancelar
-          </Button>
-        </div>
+  // ---- Login del dueño con email ----
+  const [ownerEmail, setOwnerEmail] = useState('');
+  const [ownerPassword, setOwnerPassword] = useState('');
+  const [ownerBusy, setOwnerBusy] = useState(false);
+  const [ownerError, setOwnerError] = useState('');
+
+  const doOwnerLogin = async () => {
+    setOwnerError('');
+    if (!ownerEmail || !ownerPassword) {
+      setOwnerError('Completá email y contraseña.');
+      return;
+    }
+    setOwnerBusy(true);
+    try {
+      const role = await ownerLogin(ownerEmail, ownerPassword);
+      if (role) {
+        soundFX.playBarcodeBeep();
+        onUnlock(role);
+      } else {
+        setOwnerError('Email o contraseña incorrectos.');
+      }
+    } catch (err: any) {
+      setOwnerError(err.message || 'No se pudo iniciar sesión.');
+    } finally {
+      setOwnerBusy(false);
+    }
+  };
+
+  // ---- Crear kiosco nuevo ----
+  const [signupName, setSignupName] = useState('');
+  const [signupSlug, setSignupSlug] = useState('');
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [signupEmail, setSignupEmail] = useState('');
+  const [signupPassword, setSignupPassword] = useState('');
+  const [signupBusy, setSignupBusy] = useState(false);
+  const [signupError, setSignupError] = useState('');
+
+  const doSignup = async () => {
+    setSignupError('');
+    const slug = slugify(signupSlug || signupName);
+    if (!signupName.trim()) return setSignupError('Poné el nombre de tu kiosco.');
+    if (!slug) return setSignupError('El código del kiosco quedó vacío, probá con otro nombre.');
+    if (!signupEmail || !signupPassword) return setSignupError('Completá tu email y una contraseña.');
+    if (signupPassword.length < 6) return setSignupError('La contraseña debe tener al menos 6 caracteres.');
+    setSignupBusy(true);
+    try {
+      await ownerSignUp(signupEmail, signupPassword, slug, signupName.trim());
+      soundFX.playBarcodeBeep();
+      onUnlock('admin');
+    } catch (err: any) {
+      setSignupError(err.message || 'No se pudo crear el kiosco.');
+    } finally {
+      setSignupBusy(false);
+    }
+  };
+
+  const shell = (icon: React.ReactNode, title: string, subtitle: string, children: React.ReactNode) => (
+    <div className="fixed inset-0 z-[100] bg-canvas flex flex-col items-center justify-center p-6 overflow-y-auto">
+      <div className="h-12 w-12 rounded-xl bg-ink text-white flex items-center justify-center mb-4 shrink-0">
+        {icon}
       </div>
+      <h1 className="text-lg font-semibold tracking-tight mb-1 text-center">{title}</h1>
+      <p className="mb-5 text-[13px] text-muted text-center max-w-[280px]">{subtitle}</p>
+      <div className="w-full max-w-[280px] space-y-3 py-2">{children}</div>
+    </div>
+  );
+
+  if (mode === 'switch') {
+    return shell(
+      <Building2 className="h-6 w-6" strokeWidth={2} />,
+      'Elegí tu kiosco',
+      'Escribí el código que te dio el dueño del negocio. Dejalo vacío para el kiosco original de este equipo.',
+      <>
+        <Input
+          autoFocus
+          value={slugInput}
+          onChange={(e) => setSlugInput(e.target.value)}
+          placeholder="código del kiosco (opcional)"
+          onKeyDown={(e) => e.key === 'Enter' && confirmSwitch()}
+        />
+        {slugError && <p className="text-[13px] font-medium text-danger">{slugError}</p>}
+        <Button variant="primary" className="w-full" onClick={confirmSwitch}>
+          Continuar
+        </Button>
+        <Button variant="ghost" className="w-full" onClick={() => setMode('pin')}>
+          Cancelar
+        </Button>
+      </>,
+    );
+  }
+
+  if (mode === 'owner-login') {
+    return shell(
+      <Mail className="h-6 w-6" strokeWidth={2} />,
+      'Iniciar sesión',
+      'Con el email y la contraseña de tu cuenta de administrador.',
+      <>
+        <Input
+          autoFocus
+          type="email"
+          value={ownerEmail}
+          onChange={(e) => setOwnerEmail(e.target.value)}
+          placeholder="tu@email.com"
+        />
+        <Input
+          type="password"
+          value={ownerPassword}
+          onChange={(e) => setOwnerPassword(e.target.value)}
+          placeholder="Contraseña"
+          onKeyDown={(e) => e.key === 'Enter' && doOwnerLogin()}
+        />
+        {ownerError && <p className="text-[13px] font-medium text-danger">{ownerError}</p>}
+        <Button variant="primary" className="w-full" onClick={doOwnerLogin} disabled={ownerBusy}>
+          {ownerBusy ? 'Entrando…' : 'Entrar'}
+        </Button>
+        <Button variant="ghost" className="w-full" onClick={() => setMode('pin')}>
+          Volver
+        </Button>
+      </>,
+    );
+  }
+
+  if (mode === 'signup') {
+    return shell(
+      <Building2 className="h-6 w-6" strokeWidth={2} />,
+      'Creá tu kiosco',
+      'Gratis, en un minuto. Vos administrás tu propio negocio, separado de cualquier otro.',
+      <>
+        <Input
+          autoFocus
+          value={signupName}
+          onChange={(e) => {
+            setSignupName(e.target.value);
+            if (!slugTouched) setSignupSlug(slugify(e.target.value));
+          }}
+          placeholder="Nombre del kiosco"
+        />
+        <Input
+          value={signupSlug}
+          onChange={(e) => {
+            setSlugTouched(true);
+            setSignupSlug(e.target.value);
+          }}
+          placeholder="Código único (se arma solo)"
+          className="nums"
+        />
+        <Input
+          type="email"
+          value={signupEmail}
+          onChange={(e) => setSignupEmail(e.target.value)}
+          placeholder="Tu email"
+        />
+        <Input
+          type="password"
+          value={signupPassword}
+          onChange={(e) => setSignupPassword(e.target.value)}
+          placeholder="Contraseña (6 o más)"
+          onKeyDown={(e) => e.key === 'Enter' && doSignup()}
+        />
+        {signupError && <p className="text-[13px] font-medium text-danger">{signupError}</p>}
+        <Button variant="primary" className="w-full" onClick={doSignup} disabled={signupBusy}>
+          {signupBusy ? 'Creando…' : 'Crear mi kiosco'}
+        </Button>
+        <Button variant="ghost" className="w-full" onClick={() => setMode('pin')}>
+          Volver
+        </Button>
+      </>,
     );
   }
 
@@ -118,7 +271,7 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
         {checking
           ? 'Verificando…'
           : hasCashier
-          ? 'Ingresá tu PIN (admin o vendedor)'
+          ? 'Ingresá tu PIN (admin o empleado)'
           : 'Ingresá tu PIN para continuar'}
       </p>
 
@@ -168,16 +321,36 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
       {error && <p className="mt-4 text-[13px] font-medium text-danger">PIN incorrecto</p>}
 
       {isMultiTenant && (
-        <button
-          onClick={() => {
-            setSlugInput(getTenantSlug() || '');
-            setSlugError('');
-            setSwitching(true);
-          }}
-          className="mt-6 text-[12px] font-medium text-muted hover:text-ink underline underline-offset-2"
-        >
-          ¿Es otro kiosco? Cambiar
-        </button>
+        <div className="mt-6 flex flex-col items-center gap-2 text-[12px] font-medium">
+          <button
+            onClick={() => {
+              setOwnerError('');
+              setMode('owner-login');
+            }}
+            className="text-muted hover:text-ink underline underline-offset-2"
+          >
+            ¿Sos dueño? Iniciá sesión con tu email
+          </button>
+          <button
+            onClick={() => {
+              setSignupError('');
+              setMode('signup');
+            }}
+            className="text-muted hover:text-ink underline underline-offset-2"
+          >
+            ¿No tenés cuenta? Creá tu kiosco
+          </button>
+          <button
+            onClick={() => {
+              setSlugInput(getTenantSlug() || '');
+              setSlugError('');
+              setMode('switch');
+            }}
+            className="text-muted hover:text-ink underline underline-offset-2"
+          >
+            ¿Es otro kiosco? Cambiar
+          </button>
+        </div>
       )}
     </div>
   );
