@@ -180,6 +180,40 @@ alter table public.products  add column if not exists "priceUnit" text not null 
 alter table public.purchases add column if not exists "supplierId" text;
 alter table public.purchases add column if not exists paid boolean not null default true;
 
+-- Columnas que pueden faltar si `products` viene de una versión muy anterior
+-- (create table if not exists no las agrega a una tabla que ya existe).
+alter table public.products add column if not exists category    text not null default 'Varios';
+alter table public.products add column if not exists brand       text;
+alter table public.products add column if not exists supplier    text;
+alter table public.products add column if not exists "costPrice" numeric not null default 0;
+alter table public.products add column if not exists "sellPrice" numeric not null default 0;
+alter table public.products add column if not exists "minStock"  numeric not null default 5;
+alter table public.products add column if not exists unit        text default 'unidad';
+alter table public.products add column if not exists "imageUrl"  text;
+alter table public.products add column if not exists "isActive"  boolean not null default true;
+alter table public.products add column if not exists "createdAt" timestamptz not null default now();
+alter table public.products add column if not exists "updatedAt" timestamptz not null default now();
+
+alter table public.sales add column if not exists subtotal        numeric not null default 0;
+alter table public.sales add column if not exists discount        numeric not null default 0;
+alter table public.sales add column if not exists "totalCost"     numeric not null default 0;
+alter table public.sales add column if not exists profit          numeric not null default 0;
+alter table public.sales add column if not exists "amountPaid"    numeric;
+alter table public.sales add column if not exists "changeGiven"   numeric;
+alter table public.sales add column if not exists "customerId"    text;
+alter table public.sales add column if not exists "customerName"  text;
+alter table public.sales add column if not exists notes           text;
+alter table public.sales add column if not exists "cashSessionId" text;
+alter table public.sales add column if not exists status          text not null default 'completed';
+
+alter table public.customers add column if not exists phone       text;
+alter table public.customers add column if not exists notes       text;
+alter table public.customers add column if not exists balance     numeric not null default 0;
+alter table public.customers add column if not exists "createdAt" timestamptz not null default now();
+alter table public.customers add column if not exists "updatedAt" timestamptz not null default now();
+
+alter table public.stock_movements add column if not exists "refId" text;
+
 -- ============================================================================
 -- Login real (Supabase Auth) — dos cuentas fijas por kiosco:
 --   admin@kioscocontrol.local  y  vendedor@kioscocontrol.local
