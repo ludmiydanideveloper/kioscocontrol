@@ -181,23 +181,140 @@ alter table public.purchases add column if not exists "supplierId" text;
 alter table public.purchases add column if not exists paid boolean not null default true;
 
 -- ============================================================================
--- RLS — acceso anónimo total (kiosco de confianza, un solo dispositivo).
--- Para multiusuario con login, reemplazá estas policies por auth.uid().
+-- Login real (Supabase Auth) — dos cuentas fijas por kiosco:
+--   admin@kioscocontrol.local  y  vendedor@kioscocontrol.local
+-- La "contraseña" de cada cuenta es el PIN que se define desde Configuración.
+-- `profiles` guarda el rol de cada auth.users; `app_meta` es una fila pública
+-- (sin datos sensibles) que le dice a la pantalla de login si ya hay admin/
+-- vendedor configurados, sin necesitar sesión.
+-- ============================================================================
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  role text not null check (role in ('admin','cashier')),
+  active boolean not null default true,
+  "createdAt" timestamptz not null default now()
+);
+
+create table if not exists public.app_meta (
+  id text primary key default 'singleton',
+  admin_configured boolean not null default false,
+  cashier_active boolean not null default false
+);
+insert into public.app_meta (id) values ('singleton') on conflict (id) do nothing;
+
+-- Corre "as owner" (evita recursión de RLS al consultar profiles desde policies).
+create or replace function public.is_admin()
+returns boolean
+language sql security definer stable set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin' and active);
+$$;
+grant execute on function public.is_admin() to authenticated, anon;
+
+-- Reclama un rol para el usuario recién autenticado (llamado una vez, tras
+-- signUp). El admin sólo se puede reclamar si no existe todavía; el vendedor
+-- sólo si ya hay un admin configurado. No se puede escalar privilegios.
+create or replace function public.claim_role(p_role text)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v_meta record;
+begin
+  if p_role not in ('admin','cashier') then
+    raise exception 'Rol inválido';
+  end if;
+  select * into v_meta from public.app_meta where id = 'singleton' for update;
+  if p_role = 'admin' then
+    if v_meta.admin_configured then
+      raise exception 'El administrador ya está configurado';
+    end if;
+    insert into public.profiles (id, role, active) values (auth.uid(), 'admin', true)
+      on conflict (id) do update set role = 'admin', active = true;
+    update public.app_meta set admin_configured = true where id = 'singleton';
+  else
+    if not v_meta.admin_configured then
+      raise exception 'Primero configurá el administrador';
+    end if;
+    insert into public.profiles (id, role, active) values (auth.uid(), 'cashier', true)
+      on conflict (id) do update set role = 'cashier', active = true;
+    update public.app_meta set cashier_active = true where id = 'singleton';
+  end if;
+end;
+$$;
+grant execute on function public.claim_role(text) to authenticated;
+
+-- El admin activa/desactiva el acceso del vendedor sin tocar su contraseña.
+create or replace function public.set_cashier_active(p_active boolean)
+returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Sólo el administrador puede hacer esto';
+  end if;
+  update public.profiles set active = p_active where role = 'cashier';
+  update public.app_meta set cashier_active = p_active where id = 'singleton';
+end;
+$$;
+grant execute on function public.set_cashier_active(boolean) to authenticated;
+
+alter table public.profiles enable row level security;
+drop policy if exists profiles_select on public.profiles;
+create policy profiles_select on public.profiles for select
+  using (auth.uid() = id or public.is_admin());
+-- Sin policies de insert/update/delete: todo pasa por las funciones de arriba.
+
+alter table public.app_meta enable row level security;
+drop policy if exists app_meta_select_public on public.app_meta;
+create policy app_meta_select_public on public.app_meta for select using (true);
+-- Sin policies de escritura directa: sólo las funciones (security definer) la tocan.
+
+-- ============================================================================
+-- RLS de datos — requiere sesión (Supabase Auth). Tablas con información
+-- financiera sensible (deudas, gastos, compras) sólo las ve/edita el admin;
+-- el resto (venta, stock, fiado, caja) lo puede operar cualquier usuario
+-- logueado, porque el vendedor las necesita para vender.
 -- ============================================================================
 do $$
 declare t text;
 begin
+  -- Nivel 1: cualquier usuario autenticado (admin o vendedor).
   foreach t in array array[
-    'products','sales','stock_movements','customers','customer_payments',
-    'suppliers','supplier_payments','expenses',
-    'cash_sessions','cash_movements','purchases'
+    'sales','stock_movements','customers','customer_payments',
+    'cash_sessions','cash_movements'
   ]
   loop
     execute format('alter table public.%I enable row level security;', t);
     execute format('drop policy if exists "anon_all_%1$s" on public.%1$I;', t);
-    execute format('create policy "anon_all_%1$s" on public.%1$I for all using (true) with check (true);', t);
+    execute format('drop policy if exists "auth_all_%1$s" on public.%1$I;', t);
+    execute format(
+      'create policy "auth_all_%1$s" on public.%1$I for all using (auth.uid() is not null) with check (auth.uid() is not null);',
+      t
+    );
+  end loop;
+
+  -- Nivel 2: sólo administrador (proveedores, gastos, compras, pagos a proveedor).
+  foreach t in array array['suppliers','supplier_payments','expenses','purchases']
+  loop
+    execute format('alter table public.%I enable row level security;', t);
+    execute format('drop policy if exists "anon_all_%1$s" on public.%1$I;', t);
+    execute format('drop policy if exists "admin_all_%1$s" on public.%1$I;', t);
+    execute format(
+      'create policy "admin_all_%1$s" on public.%1$I for all using (public.is_admin()) with check (public.is_admin());',
+      t
+    );
   end loop;
 end $$;
+
+-- products: cualquier logueado puede ver/vender; sólo el admin da de alta,
+-- edita o cambia precios/costos.
+alter table public.products enable row level security;
+drop policy if exists "anon_all_products" on public.products;
+drop policy if exists products_select on public.products;
+drop policy if exists products_write on public.products;
+drop policy if exists products_update on public.products;
+drop policy if exists products_delete on public.products;
+create policy products_select on public.products for select using (auth.uid() is not null);
+create policy products_write on public.products for insert with check (public.is_admin());
+create policy products_update on public.products for update using (public.is_admin()) with check (public.is_admin());
+create policy products_delete on public.products for delete using (public.is_admin());
 
 -- ============================================================================
 -- Realtime
@@ -221,7 +338,7 @@ end $$;
 -- Registra una venta: inserta la venta, descuenta stock con movimientos,
 -- actualiza saldo del cliente si es fiado y suma a caja si es efectivo.
 create or replace function public.process_sale(payload jsonb)
-returns jsonb language plpgsql as $$
+returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   item        jsonb;
   v_new_stock numeric;
@@ -231,6 +348,7 @@ declare
   v_customer  text := nullif(payload->>'customerId', '');
   v_total     numeric := (payload->>'total')::numeric;
 begin
+  if auth.uid() is null then raise exception 'No autenticado'; end if;
   insert into public.sales (
     id, timestamp, items, subtotal, discount, total, "totalCost", profit,
     "paymentMethod", "amountPaid", "changeGiven", "customerId", "customerName",
@@ -282,9 +400,10 @@ $$;
 
 -- Ajuste manual de stock (suma/resta) con movimiento auditado.
 create or replace function public.adjust_stock(p_product_id text, p_delta numeric, p_reason text)
-returns jsonb language plpgsql as $$
+returns jsonb language plpgsql security definer set search_path = public as $$
 declare v_new_stock numeric;
 begin
+  if auth.uid() is null then raise exception 'No autenticado'; end if;
   update public.products
      set stock = greatest(0, stock + p_delta), "updatedAt" = now()
    where id = p_product_id
@@ -301,7 +420,7 @@ $$;
 -- Registra una compra a proveedor: suma stock, actualiza costo, audita y
 -- (si queda en cuenta) suma al saldo que se le debe al proveedor.
 create or replace function public.register_purchase(payload jsonb)
-returns jsonb language plpgsql as $$
+returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   item        jsonb;
   v_new_stock numeric;
@@ -310,6 +429,7 @@ declare
   v_paid      boolean := coalesce((payload->>'paid')::boolean, true);
   v_total     numeric := coalesce((payload->>'total')::numeric, 0);
 begin
+  if not public.is_admin() then raise exception 'Sólo el administrador puede registrar compras'; end if;
   insert into public.purchases (id, timestamp, supplier, "supplierId", items, total, paid, notes)
   values (v_id, now(), nullif(payload->>'supplier',''), v_supplier,
           payload->'items', v_total, v_paid, nullif(payload->>'notes',''));
@@ -341,9 +461,10 @@ $$;
 -- Pago de un cliente contra su cuenta corriente.
 create or replace function public.register_customer_payment(
   p_customer_id text, p_amount numeric, p_method text, p_notes text, p_cash_session text
-) returns jsonb language plpgsql as $$
+) returns jsonb language plpgsql security definer set search_path = public as $$
 declare v_new_balance numeric;
 begin
+  if auth.uid() is null then raise exception 'No autenticado'; end if;
   insert into public.customer_payments ("customerId", amount, method, notes)
   values (p_customer_id, p_amount, coalesce(p_method, 'efectivo'), nullif(p_notes, ''));
 
@@ -362,9 +483,10 @@ $$;
 -- Pago a un proveedor contra lo que se le debe.
 create or replace function public.register_supplier_payment(
   p_supplier_id text, p_amount numeric, p_method text, p_notes text, p_cash_session text
-) returns jsonb language plpgsql as $$
+) returns jsonb language plpgsql security definer set search_path = public as $$
 declare v_new_balance numeric;
 begin
+  if not public.is_admin() then raise exception 'Sólo el administrador puede registrar pagos a proveedores'; end if;
   insert into public.supplier_payments ("supplierId", amount, method, notes)
   values (p_supplier_id, p_amount, coalesce(p_method, 'efectivo'), nullif(p_notes, ''));
 
@@ -383,9 +505,10 @@ $$;
 -- Registra un gasto del kiosco (y lo descuenta de caja si es efectivo).
 create or replace function public.register_expense(
   p_category text, p_description text, p_amount numeric, p_method text, p_cash_session text
-) returns jsonb language plpgsql as $$
+) returns jsonb language plpgsql security definer set search_path = public as $$
 declare v_id text := gen_random_uuid()::text;
 begin
+  if not public.is_admin() then raise exception 'Sólo el administrador puede registrar gastos'; end if;
   insert into public.expenses (id, date, category, description, amount, "paymentMethod", "cashSessionId")
   values (v_id, now(), coalesce(p_category, 'General'), nullif(p_description, ''),
           p_amount, coalesce(p_method, 'efectivo'), nullif(p_cash_session, ''));
@@ -401,12 +524,13 @@ $$;
 
 -- Anula una venta: repone stock, revierte saldo de fiado y caja.
 create or replace function public.void_sale(p_sale_id text, p_reason text)
-returns jsonb language plpgsql as $$
+returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_sale      public.sales%rowtype;
   item        jsonb;
   v_new_stock numeric;
 begin
+  if not public.is_admin() then raise exception 'Sólo el administrador puede anular ventas'; end if;
   select * into v_sale from public.sales where id = p_sale_id;
   if not found then raise exception 'Venta % no encontrada', p_sale_id; end if;
   if v_sale.status = 'cancelled' then return jsonb_build_object('ok', true, 'already', true); end if;
@@ -445,9 +569,10 @@ $$;
 -- Cierra la caja calculando el efectivo esperado como la suma de sus movimientos
 -- (la apertura ya está registrada como un movimiento).
 create or replace function public.close_cash_session(p_session_id text, p_counted numeric, p_notes text)
-returns jsonb language plpgsql as $$
+returns jsonb language plpgsql security definer set search_path = public as $$
 declare v_expected numeric;
 begin
+  if auth.uid() is null then raise exception 'No autenticado'; end if;
   if not exists (select 1 from public.cash_sessions where id = p_session_id) then
     raise exception 'Caja % no encontrada', p_session_id;
   end if;
@@ -464,3 +589,24 @@ begin
   return jsonb_build_object('ok', true, 'expected', v_expected, 'difference', p_counted - v_expected);
 end;
 $$;
+
+-- ============================================================================
+-- Estas funciones corren "security definer" (necesitan tocar tablas que el
+-- que llama no puede editar directo, p.ej. el vendedor descontando stock de
+-- products). Se restringe su ejecución a usuarios logueados únicamente.
+-- ============================================================================
+revoke all on function
+  public.process_sale(jsonb), public.adjust_stock(text, numeric, text),
+  public.register_purchase(jsonb), public.register_customer_payment(text, numeric, text, text, text),
+  public.register_supplier_payment(text, numeric, text, text, text),
+  public.register_expense(text, text, numeric, text, text),
+  public.void_sale(text, text), public.close_cash_session(text, numeric, text)
+from public, anon;
+
+grant execute on function
+  public.process_sale(jsonb), public.adjust_stock(text, numeric, text),
+  public.register_purchase(jsonb), public.register_customer_payment(text, numeric, text, text, text),
+  public.register_supplier_payment(text, numeric, text, text, text),
+  public.register_expense(text, text, numeric, text, text),
+  public.void_sale(text, text), public.close_cash_session(text, numeric, text)
+to authenticated;

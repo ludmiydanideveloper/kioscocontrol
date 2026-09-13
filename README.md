@@ -34,27 +34,43 @@ almacenamiento del sitio o ejecutá en la consola `localStorage.removeItem('kios
 ## Modo Supabase (base central, multi-dispositivo)
 
 1. Creá un proyecto en [supabase.com](https://supabase.com).
-2. En **SQL Editor**, pegá y ejecutá el contenido de [`schema.sql`](schema.sql)
-   (crea tablas + funciones RPC + RLS + realtime; es idempotente).
-3. Copiá `URL` y `anon key` del proyecto (Settings → API) a `.env.local`:
+2. En **Authentication → Providers → Email**, desactivá **"Confirm email"**
+   (las dos cuentas de la app —admin y vendedor— no tienen buzón real).
+3. En **SQL Editor**, pegá y ejecutá el contenido de [`schema.sql`](schema.sql)
+   (crea tablas + funciones RPC + RLS por rol + realtime; es idempotente).
+4. Copiá `URL` y `anon key` del proyecto (Settings → API) a `.env.local`:
 
    ```
    VITE_SUPABASE_URL=https://xxxxx.supabase.co
    VITE_SUPABASE_ANON_KEY=eyJ...
    ```
 
-4. (Opcional) Cargá datos de ejemplo:
+5. (Opcional) Cargá datos de ejemplo:
 
    ```bash
    node seed.js            # productos + clientes demo
    node seed.js --reset    # además borra ventas / caja / movimientos previos
    ```
 
-5. `npm run dev`. El header debe mostrar **LIVE SYNC** en verde.
+6. `npm run dev`. El header debe mostrar **En vivo** en verde. Como todavía no
+   hay ningún PIN configurado, la app arranca abierta como admin: entrá a
+   **Configuración → PIN de administrador** y activá uno (mínimo 6 dígitos)
+   para crear la cuenta real. A partir de ahí el login pasa a ser obligatorio.
+7. (Recomendado, una vez creadas la cuenta de admin y —si la usás— la de
+   vendedor) En **Authentication → Settings**, desactivá **"Allow new users to
+   sign up"**. Cierra la única puerta de alta pública que queda abierta por
+   diseño (necesaria para crear esas dos cuentas la primera vez) sin afectar
+   el login normal ni el cambio de PIN.
 
-> RLS viene abierto (acceso anónimo total), pensado para un kiosco con un dispositivo
-> de confianza. Para multiusuario con login, reemplazá las policies de `schema.sql`
-> por unas basadas en `auth.uid()`.
+> **Login real con Supabase Auth.** Hay dos cuentas fijas por kiosco
+> (`admin@kioscocontrol.local` y `vendedor@kioscocontrol.local`); el PIN que
+> definís en Configuración es la contraseña de esa cuenta. Las políticas RLS
+> de `schema.sql` exigen sesión para cualquier operación, y las tablas con
+> información sensible (proveedores, gastos, compras) sólo las puede tocar
+> quien tenga rol `admin` — aplicado en el servidor, no sólo en la interfaz.
+> El vendedor cambia su propio PIN desde el ícono de llave en el punto de
+> venta; el administrador no puede resetearlo sin que el vendedor lo sepa
+> (es una cuenta real, no un dato que se pueda pisar a mano).
 
 ---
 
@@ -111,8 +127,15 @@ almacenamiento del sitio o ejecutá en la consola `localStorage.removeItem('kios
 - **Administrador**: ve todo. Con un PIN de admin la app pide clave al abrir.
 - **Vendedor**: PIN aparte; sólo ve el **punto de venta** (no accede a costos,
   reportes, caja, inventario, fiado/proveedores ni configuración). Puede dar de
-  alta un cliente al vuelo para vender fiado.
-- Sin PIN de admin configurado la app queda abierta (todo visible).
+  alta un cliente al vuelo para vender fiado. Cambia su propio PIN desde el
+  punto de venta (ícono de llave junto a "Cerrar sesión").
+- Sin PIN de admin configurado la app queda abierta (todo visible) — sólo
+  aplica en modo local o antes del primer setup en Supabase.
+- **En modo Supabase el login es real** (Supabase Auth, dos cuentas fijas) y
+  las políticas RLS lo exigen del lado del servidor, no sólo en la interfaz:
+  ni con la anon key expuesta en el bundle se puede leer o escribir nada sin
+  sesión, y las tablas de proveedores/gastos/compras sólo las toca el admin.
+  En modo local el PIN es sólo un hash en el navegador (disuade, no protege).
 
 ### Extras
 - **PWA**: instalable en el celular/tablet, funciona sin conexión.
@@ -172,13 +195,14 @@ src/
     CashRegister.tsx       caja y arqueo
     ReportsView.tsx        métricas, gráficos y gastos
     BarcodeScannerModal.tsx  escáner de cámara
-    LockScreen / SettingsModal
+    LockScreen / SettingsModal / ChangePinModal
   utils/
     db.ts                 facade: elige backend (supabase | local) + migración
     localStore.ts         backend localStorage
     supabase.ts           cliente Supabase
+    auth.ts               login: PIN local o Supabase Auth real, según backend
     demoData.ts           catálogo, clientes, proveedores y ventas de demo
-    format.ts / dateRange.ts / lock.ts / backup.ts / printTicket.ts
+    format.ts / dateRange.ts / backup.ts / printTicket.ts / barcode.ts
     *.test.ts             tests de la lógica de datos (Vitest)
 schema.sql               esquema + funciones RPC de Supabase (idempotente)
 seed.js                  carga demo en Supabase (con 30 días de ventas)

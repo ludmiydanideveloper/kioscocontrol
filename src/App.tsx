@@ -8,12 +8,13 @@ import { SuppliersView } from './components/SuppliersView';
 import { CashRegister } from './components/CashRegister';
 import { LockScreen } from './components/LockScreen';
 import { SettingsModal } from './components/SettingsModal';
+import { ChangePinModal } from './components/ChangePinModal';
 import { Product, Customer, Supplier, CashSession } from './types';
 import { soundFX } from './utils/audio';
 import { supabase } from './utils/supabase';
 import * as db from './utils/db';
 import type { BackendMode } from './utils/db';
-import { currentRole, authRequired, logout, type Role } from './utils/auth';
+import { currentRole, authRequired, logout, isRealAuth, type Role } from './utils/auth';
 import { AlertCircle, ShieldCheck, WifiOff } from 'lucide-react';
 
 const ReportsView = lazy(() =>
@@ -43,8 +44,12 @@ export default function App() {
   const [posScan, setPosScan] = useState<{ code: string; n: number } | null>(null);
   const scanCounter = useRef(0);
 
-  const [role, setRole] = useState<Role | null>(currentRole());
+  const [role, setRole] = useState<Role | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [authEnabled, setAuthEnabled] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showChangePin, setShowChangePin] = useState(false);
   const isCashier = role === 'cashier';
   const [toast, setToast] = useState<Toast | null>(null);
   const showToast = useCallback((t: Toast, ms = 3200) => {
@@ -89,34 +94,76 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    let channel: ReturnType<typeof supabase.channel> | null = null;
+  const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-    (async () => {
-      const chosen = await db.initBackend();
-      if (cancelled) return;
-      setBackendMode(chosen);
+  const loadAppData = useCallback(
+    async (chosen: BackendMode) => {
       await Promise.all([refreshProducts(), refreshCustomers(), refreshSuppliers(), refreshCashSession()]);
-      if (cancelled) return;
       setIsLoading(false);
 
-      if (chosen === 'supabase') {
-        channel = supabase
+      if (chosen === 'supabase' && !realtimeChannelRef.current) {
+        realtimeChannelRef.current = supabase
           .channel('kiosco-realtime')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, refreshProducts)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, refreshCustomers)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'suppliers' }, refreshSuppliers)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'cash_sessions' }, refreshCashSession)
-          .subscribe((status) => !cancelled && setIsConnected(status === 'SUBSCRIBED'));
+          .subscribe((status) => setIsConnected(status === 'SUBSCRIBED'));
       }
+    },
+    [refreshProducts, refreshCustomers, refreshSuppliers, refreshCashSession],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const chosen = await db.initBackend();
+      if (cancelled) return;
+      setBackendMode(chosen);
+
+      const existingRole = await currentRole();
+      if (cancelled) return;
+      setRole(existingRole);
+
+      const authIsOn = await authRequired();
+      if (cancelled) return;
+      setAuthEnabled(authIsOn);
+      const mustLogin = authIsOn && !existingRole;
+      setNeedsAuth(mustLogin);
+      setAuthChecked(true);
+
+      if (mustLogin) return; // se espera el login antes de traer datos
+      await loadAppData(chosen);
     })();
 
     return () => {
       cancelled = true;
-      if (channel) supabase.removeChannel(channel);
+      if (realtimeChannelRef.current) {
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
+      }
     };
-  }, [refreshProducts, refreshCustomers, refreshSuppliers, refreshCashSession]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleUnlock = async (unlockedRole: Role) => {
+    setRole(unlockedRole);
+    setNeedsAuth(false);
+    setIsLoading(true);
+    await loadAppData(backendMode);
+  };
+
+  const handleLogout = async () => {
+    await logout();
+    setRole(null);
+    if (realtimeChannelRef.current) {
+      supabase.removeChannel(realtimeChannelRef.current);
+      realtimeChannelRef.current = null;
+    }
+    setIsConnected(false);
+    setNeedsAuth(true);
+  };
 
   // -------------------------------------------------------------------------
   // Escáner físico (lector USB / Bluetooth que "tipea" + Enter)
@@ -218,7 +265,14 @@ export default function App() {
   const receivablesTotal = customers.reduce((acc, c) => acc + Math.max(0, c.balance), 0);
   const payablesTotal = suppliers.reduce((acc, s) => acc + Math.max(0, s.balance), 0);
 
-  if (authRequired() && !role) return <LockScreen onUnlock={setRole} />;
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-canvas flex items-center justify-center">
+        <div className="h-6 w-6 border-2 border-line-strong border-t-ink rounded-full animate-spin" />
+      </div>
+    );
+  }
+  if (needsAuth) return <LockScreen onUnlock={handleUnlock} />;
 
   const activeTab: NavTab = isCashier ? 'pos' : currentTab;
 
@@ -239,7 +293,8 @@ export default function App() {
         isAudioMuted={isAudioMuted}
         onToggleAudio={handleToggleAudio}
         onOpenSettings={role === 'admin' ? () => setShowSettings(true) : undefined}
-        onLogout={authRequired() ? () => { logout(); setRole(null); } : undefined}
+        onLogout={authEnabled ? handleLogout : undefined}
+        onChangeMyPin={isCashier && isRealAuth() ? () => setShowChangePin(true) : undefined}
       />
 
       {toast && (
@@ -386,6 +441,10 @@ export default function App() {
             refreshCustomers();
           }}
         />
+      )}
+
+      {showChangePin && (
+        <ChangePinModal onClose={() => setShowChangePin(false)} onToast={showToast} />
       )}
 
       <footer className="hidden sm:block border-t border-line py-3 text-[12px] text-muted">

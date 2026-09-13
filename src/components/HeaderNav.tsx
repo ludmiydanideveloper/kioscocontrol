@@ -13,6 +13,7 @@ import {
   VolumeX,
   Settings,
   LogOut,
+  KeyRound,
 } from 'lucide-react';
 import { cx } from './ui';
 import type { BackendMode } from '../utils/db';
@@ -43,6 +44,7 @@ interface HeaderNavProps {
   onToggleAudio: () => void;
   onOpenSettings?: () => void;
   onLogout?: () => void;
+  onChangeMyPin?: () => void;
 }
 
 const TABS: { id: NavTab; label: string; icon: React.ElementType }[] = [
@@ -71,6 +73,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   onToggleAudio,
   onOpenSettings,
   onLogout,
+  onChangeMyPin,
 }) => {
   const totalAlerts = lowStockCount + outOfStockCount;
   const isCashier = role === 'cashier';
@@ -165,6 +168,11 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
             {onOpenSettings && (
               <button onClick={onOpenSettings} className={iconBtn} title="Configuración">
                 <Settings className="h-4 w-4" />
+              </button>
+            )}
+            {onChangeMyPin && (
+              <button onClick={onChangeMyPin} className={iconBtn} title="Cambiar mi PIN">
+                <KeyRound className="h-4 w-4" />
               </button>
             )}
             {onLogout && (

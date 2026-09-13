@@ -1,30 +1,48 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Delete, Store } from 'lucide-react';
 import { login, cashierEnabled, type Role } from '../utils/auth';
+import { getBackendMode } from '../utils/db';
 import { soundFX } from '../utils/audio';
 import { cx } from './ui';
+
+// En modo Supabase el PIN es la contraseña de una cuenta real (mínimo 6).
+const MIN_PIN_LEN = getBackendMode() === 'supabase' ? 6 : 4;
 
 export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnlock }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [hasCashier, setHasCashier] = useState(false);
+
+  useEffect(() => {
+    cashierEnabled().then(setHasCashier);
+  }, []);
 
   const tryUnlock = async (value: string) => {
-    const role = await login(value);
-    if (role) {
-      soundFX.playBarcodeBeep();
-      onUnlock(role);
-    } else {
-      soundFX.playErrorBuzz();
-      setError(true);
-      setPin('');
+    setChecking(true);
+    try {
+      const role = await login(value);
+      if (role) {
+        soundFX.playBarcodeBeep();
+        onUnlock(role);
+      } else {
+        soundFX.playErrorBuzz();
+        setError(true);
+        setPin('');
+      }
+    } finally {
+      setChecking(false);
     }
   };
 
   const press = (digit: string) => {
+    if (checking) return;
     setError(false);
-    const next = (pin + digit).slice(0, 8);
-    setPin(next);
-    if (next.length >= 4) tryUnlock(next);
+    setPin((p) => {
+      const next = (p + digit).slice(0, 8);
+      if (next.length >= MIN_PIN_LEN) tryUnlock(next);
+      return next;
+    });
   };
 
   return (
@@ -34,11 +52,15 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
       </div>
       <h1 className="text-lg font-semibold tracking-tight">KioscoControl</h1>
       <p className="mt-1 mb-7 text-[13px] text-muted">
-        {cashierEnabled() ? 'Ingresá tu PIN (admin o vendedor)' : 'Ingresá tu PIN para continuar'}
+        {checking
+          ? 'Verificando…'
+          : hasCashier
+          ? 'Ingresá tu PIN (admin o vendedor)'
+          : 'Ingresá tu PIN para continuar'}
       </p>
 
       <div className="flex gap-2.5 mb-7 h-3">
-        {Array.from({ length: Math.max(4, pin.length) }).map((_, i) => (
+        {Array.from({ length: Math.max(MIN_PIN_LEN, pin.length) }).map((_, i) => (
           <span
             key={i}
             className={cx(
