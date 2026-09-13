@@ -5,10 +5,11 @@ import { getBackendMode } from '../utils/db';
 import { soundFX } from '../utils/audio';
 import { cx } from './ui';
 
-// En modo Supabase el PIN es la contraseña de una cuenta real (mínimo 6).
-const MIN_PIN_LEN = getBackendMode() === 'supabase' ? 6 : 4;
-
 export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnlock }) => {
+  // Calculado al renderizar (no al importar el módulo): para cuando esta
+  // pantalla se muestra, App ya esperó a que initBackend() elija el modo real.
+  // En modo Supabase el PIN es la contraseña de una cuenta real (mínimo 6).
+  const [minPinLen] = useState(() => (getBackendMode() === 'supabase' ? 6 : 4));
   const [pin, setPin] = useState('');
   const [error, setError] = useState(false);
   const [checking, setChecking] = useState(false);
@@ -40,7 +41,7 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
     setError(false);
     setPin((p) => {
       const next = (p + digit).slice(0, 8);
-      if (next.length >= MIN_PIN_LEN) tryUnlock(next);
+      if (next.length >= minPinLen) tryUnlock(next);
       return next;
     });
   };
@@ -60,7 +61,7 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
       </p>
 
       <div className="flex gap-2.5 mb-7 h-3">
-        {Array.from({ length: Math.max(MIN_PIN_LEN, pin.length) }).map((_, i) => (
+        {Array.from({ length: Math.max(minPinLen, pin.length) }).map((_, i) => (
           <span
             key={i}
             className={cx(
