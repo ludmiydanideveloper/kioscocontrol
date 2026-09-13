@@ -12,7 +12,12 @@ Funciona en **dos modos**:
 | **Local** (por defecto) | Sin configurar nada | `localStorage` del navegador — un solo dispositivo, offline |
 | **Supabase** | Al aplicar `schema.sql` y cargar credenciales | Base central, sincronización en tiempo real entre varios dispositivos |
 
-La app detecta sola qué modo usar al arrancar (badge **LOCAL** / **LIVE SYNC** en el header).
+La app detecta sola qué modo usar al arrancar.
+
+En modo Supabase es **multi-tenant**: un mismo proyecto/deploy puede alojar varios
+kioscos (negocios) distintos, cada uno con sus propios productos, ventas, clientes,
+etc., completamente aislados entre sí — ver [«Varios kioscos (multi-tenant)»](#varios-kioscos-multi-tenant)
+más abajo.
 
 ---
 
@@ -52,25 +57,52 @@ almacenamiento del sitio o ejecutá en la consola `localStorage.removeItem('kios
    node seed.js --reset    # además borra ventas / caja / movimientos previos
    ```
 
-6. `npm run dev`. El header debe mostrar **En vivo** en verde. Como todavía no
-   hay ningún PIN configurado, la app arranca abierta como admin: entrá a
-   **Configuración → PIN de administrador** y activá uno (mínimo 6 dígitos)
-   para crear la cuenta real. A partir de ahí el login pasa a ser obligatorio.
-7. (Recomendado, una vez creadas la cuenta de admin y —si la usás— la de
-   vendedor) En **Authentication → Settings**, desactivá **"Allow new users to
-   sign up"**. Cierra la única puerta de alta pública que queda abierta por
-   diseño (necesaria para crear esas dos cuentas la primera vez) sin afectar
-   el login normal ni el cambio de PIN.
+6. `npm run dev`. Como todavía no hay ningún PIN configurado, la app arranca
+   abierta como admin: entrá a **Configuración → PIN de administrador** y
+   activá uno (mínimo 6 dígitos) para crear la cuenta real. A partir de ahí
+   el login pasa a ser obligatorio.
 
-> **Login real con Supabase Auth.** Hay dos cuentas fijas por kiosco
-> (`admin@kioscocontrol.local` y `vendedor@kioscocontrol.local`); el PIN que
-> definís en Configuración es la contraseña de esa cuenta. Las políticas RLS
-> de `schema.sql` exigen sesión para cualquier operación, y las tablas con
-> información sensible (proveedores, gastos, compras) sólo las puede tocar
-> quien tenga rol `admin` — aplicado en el servidor, no sólo en la interfaz.
-> El vendedor cambia su propio PIN desde el ícono de llave en el punto de
-> venta; el administrador no puede resetearlo sin que el vendedor lo sepa
-> (es una cuenta real, no un dato que se pueda pisar a mano).
+> **Login real con Supabase Auth, multi-tenant.** Cada kiosco tiene dos
+> cuentas: `admin@<negocio>.kioscocontrol.local` y `vendedor@<negocio>...`
+> (el kiosco original de este proyecto no lleva subdominio: son
+> `admin@kioscocontrol.local` / `vendedor@kioscocontrol.local`). El PIN que
+> definís en Configuración es la contraseña de esa cuenta. Dejá **"Allow new
+> users to sign up"** activado en Authentication → Settings — hace falta para
+> que cada kiosco pueda crear su propio admin/vendedor la primera vez; la
+> seguridad no depende de bloquear eso, sino de que la función `claim_role()`
+> sólo deja reclamar el rol de admin de un negocio que todavía no tiene uno, y
+> el de vendedor sólo si ese negocio ya tiene admin. Las políticas RLS exigen
+> sesión **y mismo negocio** para cualquier operación, y las tablas con
+> información sensible (proveedores, gastos, compras) sólo las puede tocar el
+> admin de ESE negocio — todo aplicado en el servidor, no en la interfaz. El
+> vendedor cambia su propio PIN desde el ícono de llave en el punto de venta.
+
+---
+
+## Varios kioscos (multi-tenant)
+
+Un mismo proyecto de Supabase (y un mismo deploy de la app) puede alojar
+varios negocios distintos, cada uno viendo sólo sus propios productos, ventas,
+clientes, etc. Cada dispositivo "recuerda" a qué kiosco pertenece (guardado en
+el navegador); por defecto es el kiosco original, sin nada que configurar.
+
+**Dar de alta un kiosco nuevo** (vos, como dueño de la plataforma):
+
+1. Abrí [`onboard-tenant.sql`](onboard-tenant.sql), completá el slug y el
+   nombre del negocio, y corrélo en el SQL Editor de Supabase. Es un solo
+   `insert` — no hace falta crear nada más a mano.
+2. Pasále al dueño del negocio el link de la app y el código (slug) que
+   elegiste. Desde la pantalla de PIN, toca **"¿Es otro kiosco? Cambiar"**,
+   pone el código y confirma — a partir de ahí la app queda "abierta" para
+   ESE kiosco (sin admin todavía) y activa su propio PIN de administrador
+   desde Configuración, exactamente igual que en el kiosco original. Vos
+   nunca ves ni elegís su PIN.
+
+Los datos de cada negocio están completamente aislados a nivel de base de
+datos (no es sólo un filtro en la interfaz): las políticas RLS de
+`schema.sql` exigen que cada fila pertenezca al mismo negocio que el usuario
+logueado, así que ni con la anon key expuesta en el bundle se puede leer o
+escribir datos de otro kiosco.
 
 ---
 
@@ -204,6 +236,7 @@ src/
     demoData.ts           catálogo, clientes, proveedores y ventas de demo
     format.ts / dateRange.ts / backup.ts / printTicket.ts / barcode.ts
     *.test.ts             tests de la lógica de datos (Vitest)
-schema.sql               esquema + funciones RPC de Supabase (idempotente)
+schema.sql               esquema + funciones RPC de Supabase, multi-tenant (idempotente)
+onboard-tenant.sql       da de alta un kiosco nuevo (tenant)
 seed.js                  carga demo en Supabase (con 30 días de ventas)
 ```

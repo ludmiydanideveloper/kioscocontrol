@@ -1,9 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Delete, Store } from 'lucide-react';
-import { login, cashierEnabled, type Role } from '../utils/auth';
+import { Delete, Store, Building2 } from 'lucide-react';
+import {
+  login,
+  cashierEnabled,
+  getTenantSlug,
+  setTenantSlug,
+  tenantSlugExists,
+  getTenantName,
+  type Role,
+} from '../utils/auth';
 import { getBackendMode } from '../utils/db';
 import { soundFX } from '../utils/audio';
-import { cx } from './ui';
+import { cx, Input, Button } from './ui';
+
+const isMultiTenant = getBackendMode() === 'supabase';
 
 export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnlock }) => {
   // Calculado al renderizar (no al importar el módulo): para cuando esta
@@ -14,10 +24,18 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
   const [error, setError] = useState(false);
   const [checking, setChecking] = useState(false);
   const [hasCashier, setHasCashier] = useState(false);
+  const [tenantName, setTenantName] = useState<string | null>(null);
 
-  useEffect(() => {
+  const [switching, setSwitching] = useState(false);
+  const [slugInput, setSlugInput] = useState(getTenantSlug() || '');
+  const [slugError, setSlugError] = useState('');
+
+  const refreshTenantInfo = () => {
     cashierEnabled().then(setHasCashier);
-  }, []);
+    if (isMultiTenant) getTenantName().then(setTenantName);
+  };
+
+  useEffect(refreshTenantInfo, []);
 
   const tryUnlock = async (value: string) => {
     setChecking(true);
@@ -46,12 +64,56 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
     });
   };
 
+  const confirmSwitch = async () => {
+    setSlugError('');
+    const ok = await tenantSlugExists(slugInput);
+    if (!ok) {
+      setSlugError('No encontramos ese kiosco.');
+      return;
+    }
+    setTenantSlug(slugInput);
+    setPin('');
+    setError(false);
+    setSwitching(false);
+    refreshTenantInfo();
+  };
+
+  if (switching) {
+    return (
+      <div className="fixed inset-0 z-[100] bg-canvas flex flex-col items-center justify-center p-6">
+        <div className="h-12 w-12 rounded-xl bg-ink text-white flex items-center justify-center mb-4">
+          <Building2 className="h-6 w-6" strokeWidth={2} />
+        </div>
+        <h1 className="text-lg font-semibold tracking-tight mb-1">Elegí tu kiosco</h1>
+        <p className="mb-5 text-[13px] text-muted text-center max-w-[280px]">
+          Escribí el código que te dio el dueño del negocio. Dejalo vacío para el kiosco original de este equipo.
+        </p>
+        <div className="w-full max-w-[280px] space-y-3">
+          <Input
+            autoFocus
+            value={slugInput}
+            onChange={(e) => setSlugInput(e.target.value)}
+            placeholder="código del kiosco (opcional)"
+            onKeyDown={(e) => e.key === 'Enter' && confirmSwitch()}
+          />
+          {slugError && <p className="text-[13px] font-medium text-danger">{slugError}</p>}
+          <Button variant="primary" className="w-full" onClick={confirmSwitch}>
+            Continuar
+          </Button>
+          <Button variant="ghost" className="w-full" onClick={() => setSwitching(false)}>
+            Cancelar
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-[100] bg-canvas flex flex-col items-center justify-center p-6">
       <div className="h-12 w-12 rounded-xl bg-ink text-white flex items-center justify-center mb-4">
         <Store className="h-6 w-6" strokeWidth={2} />
       </div>
-      <h1 className="text-lg font-semibold tracking-tight">Kiosco</h1>
+      <h1 className="text-lg font-semibold tracking-tight">{tenantName || 'Kiosco'}</h1>
       <p className="mt-1 mb-7 text-[13px] text-muted">
         {checking
           ? 'Verificando…'
@@ -104,6 +166,19 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
       </div>
 
       {error && <p className="mt-4 text-[13px] font-medium text-danger">PIN incorrecto</p>}
+
+      {isMultiTenant && (
+        <button
+          onClick={() => {
+            setSlugInput(getTenantSlug() || '');
+            setSlugError('');
+            setSwitching(true);
+          }}
+          className="mt-6 text-[12px] font-medium text-muted hover:text-ink underline underline-offset-2"
+        >
+          ¿Es otro kiosco? Cambiar
+        </button>
+      )}
     </div>
   );
 };

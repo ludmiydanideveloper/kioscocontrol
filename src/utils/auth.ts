@@ -1,25 +1,60 @@
 // ============================================================================
 // Acceso con dos roles: administrador y vendedor.
 //   - Modo local: PIN hasheado en localStorage — disuade el acceso casual,
-//     no hay servidor que lo controle (no hay servidor, punto).
-//   - Modo Supabase: login real contra Supabase Auth. Dos cuentas fijas por
-//     kiosco (admin@kioscocontrol.local / vendedor@kioscocontrol.local), con
-//     el PIN como contraseña, y una tabla `profiles` con el rol de cada una.
-//     Es control de acceso de verdad: las políticas RLS de schema.sql exigen
-//     sesión para cualquier operación, y las tablas sensibles (proveedores,
-//     gastos, compras) sólo las puede tocar quien tenga rol admin — aunque
-//     alguien llame a la API directo con la anon key, sin pasar por la app.
+//     no hay servidor que lo controle (no hay servidor, punto). Sirve para
+//     un solo kiosco por dispositivo.
+//   - Modo Supabase: login real contra Supabase Auth, multi-tenant — un solo
+//     proyecto de Supabase puede alojar varios kioscos (negocios) distintos,
+//     cada uno con sus propios datos aislados. Cada negocio tiene dos cuentas
+//     fijas: admin@<slug>.kioscocontrol.local y vendedor@<slug>.kioscocontrol.local
+//     (el kiosco original de este proyecto, antes de existir multi-tenant,
+//     sigue sin subdominio: admin@kioscocontrol.local / vendedor@...). El PIN
+//     es la contraseña de esa cuenta. `profiles` guarda el rol y el tenant de
+//     cada una. Es control de acceso de verdad: las políticas RLS de
+//     schema.sql exigen sesión + mismo tenant para cualquier operación, y las
+//     tablas sensibles (proveedores, gastos, compras) sólo las puede tocar
+//     quien tenga rol admin de ESE negocio — aunque alguien llame a la API
+//     directo con la anon key, sin pasar por la app.
 // ============================================================================
 import { supabase } from './supabase';
 import { getBackendMode } from './db';
 
 export type Role = 'admin' | 'cashier';
 
-const ADMIN_EMAIL = 'admin@kioscocontrol.local';
-const CASHIER_EMAIL = 'vendedor@kioscocontrol.local';
+const EMAIL_DOMAIN = 'kioscocontrol.local';
+const SLUG_KEY = 'kioscocontrol:tenantSlug';
+
+/** Slug del negocio activo en este dispositivo (null = el kiosco original, sin subdominio). */
+export function getTenantSlug(): string | null {
+  try {
+    return localStorage.getItem(SLUG_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Cambia a qué negocio apunta este dispositivo (lo usan empleados de otro kiosco que comparten un equipo). */
+export function setTenantSlug(slug: string | null): void {
+  try {
+    const clean = slug?.trim().toLowerCase().replace(/[^a-z0-9-]/g, '') || '';
+    if (clean) localStorage.setItem(SLUG_KEY, clean);
+    else localStorage.removeItem(SLUG_KEY);
+  } catch {
+    /* noop */
+  }
+}
+
+function adminEmail(): string {
+  const slug = getTenantSlug();
+  return slug ? `admin@${slug}.${EMAIL_DOMAIN}` : `admin@${EMAIL_DOMAIN}`;
+}
+function cashierEmail(): string {
+  const slug = getTenantSlug();
+  return slug ? `vendedor@${slug}.${EMAIL_DOMAIN}` : `vendedor@${EMAIL_DOMAIN}`;
+}
 
 // ---------------------------------------------------------------------------
-// Modo local — PIN en localStorage
+// Modo local — PIN en localStorage (un solo negocio por dispositivo, sin tenants)
 // ---------------------------------------------------------------------------
 const CFG_KEY = 'kioscocontrol:auth';
 const SESSION_KEY = 'kioscocontrol:session';
@@ -126,7 +161,7 @@ const localAuth = {
 };
 
 // ---------------------------------------------------------------------------
-// Modo Supabase — Supabase Auth real + tabla `profiles`
+// Modo Supabase — Supabase Auth real + tabla `profiles`, multi-tenant
 // ---------------------------------------------------------------------------
 async function getProfile(uid: string): Promise<{ role: Role; active: boolean } | null> {
   const { data, error } = await supabase.from('profiles').select('role,active').eq('id', uid).maybeSingle();
@@ -134,27 +169,53 @@ async function getProfile(uid: string): Promise<{ role: Role; active: boolean } 
   return data as { role: Role; active: boolean };
 }
 
-async function getMeta(): Promise<{ adminConfigured: boolean; cashierActive: boolean }> {
-  const { data } = await supabase
-    .from('app_meta')
-    .select('admin_configured,cashier_active')
-    .eq('id', 'singleton')
-    .maybeSingle();
-  return { adminConfigured: !!data?.admin_configured, cashierActive: !!data?.cashier_active };
+/** Estado del tenant activo en este dispositivo (según getTenantSlug()). */
+async function getTenantMeta(): Promise<{
+  adminConfigured: boolean;
+  cashierActive: boolean;
+  name: string | null;
+  exists: boolean;
+}> {
+  const slug = getTenantSlug();
+  const q = slug
+    ? supabase.from('tenants').select('admin_configured,cashier_active,name,active').eq('slug', slug)
+    : supabase.from('tenants').select('admin_configured,cashier_active,name,active').eq('id', 'default');
+  const { data } = await q.maybeSingle();
+  return {
+    adminConfigured: !!data?.admin_configured,
+    cashierActive: !!data?.cashier_active,
+    name: data?.name ?? null,
+    exists: !!data && data.active !== false,
+  };
+}
+
+/** Nombre del negocio activo (para mostrarlo al elegir/confirmar un kiosco). */
+export async function getTenantName(): Promise<string | null> {
+  if (getBackendMode() !== 'supabase') return null;
+  return (await getTenantMeta()).name;
+}
+
+/** ¿Existe un kiosco con ese slug? (para validar antes de cambiarse a él). */
+export async function tenantSlugExists(slug: string): Promise<boolean> {
+  const clean = slug.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+  if (!clean) return true; // '' = el kiosco original, siempre existe
+  const { data } = await supabase.from('tenants').select('id').eq('slug', clean).eq('active', true).maybeSingle();
+  return !!data;
 }
 
 const supaAuth = {
   async authRequired(): Promise<boolean> {
-    return (await getMeta()).adminConfigured;
+    return (await getTenantMeta()).adminConfigured;
   },
   async cashierEnabled(): Promise<boolean> {
-    return (await getMeta()).cashierActive;
+    return (await getTenantMeta()).cashierActive;
   },
 
   /** Alta inicial del administrador (primera vez que se configura el kiosco). */
   async setupAdmin(pin: string): Promise<void> {
     if (pin.length < 6) throw new Error('En la base central el PIN debe tener al menos 6 dígitos');
-    const { data, error } = await supabase.auth.signUp({ email: ADMIN_EMAIL, password: pin });
+    const email = adminEmail();
+    const { data, error } = await supabase.auth.signUp({ email, password: pin });
     if (error) {
       if (!/already/i.test(error.message)) throw new Error(error.message);
 
@@ -171,19 +232,16 @@ const supaAuth = {
       //     a reclamar el rol (p.ej. se activó antes de desactivar "Confirm
       //     email"). Si el PIN que acaban de escribir es el mismo de ese
       //     intento, iniciamos sesión con él y completamos el alta solos.
-      if (!(await getMeta()).adminConfigured) {
-        const { data: retry, error: e2 } = await supabase.auth.signInWithPassword({
-          email: ADMIN_EMAIL,
-          password: pin,
-        });
+      if (!(await getTenantMeta()).adminConfigured) {
+        const { data: retry, error: e2 } = await supabase.auth.signInWithPassword({ email, password: pin });
         if (!e2 && retry.session) {
-          const { error: e3 } = await supabase.rpc('claim_role', { p_role: 'admin' });
+          const { error: e3 } = await supabase.rpc('claim_role');
           if (e3) throw new Error(e3.message);
           return;
         }
         throw new Error(
-          'Quedó un intento anterior sin terminar y no es el mismo PIN. Andá a Supabase → ' +
-            'Authentication → Users, borrá "admin@kioscocontrol.local" y volvé a activar el PIN.',
+          `Quedó un intento anterior sin terminar y no es el mismo PIN. Andá a Supabase → ` +
+            `Authentication → Users, borrá "${email}" y volvé a activar el PIN.`,
         );
       }
       throw new Error('Ya existe un administrador configurado.');
@@ -193,12 +251,12 @@ const supaAuth = {
         'Quedó pendiente de confirmación. Desactivá "Confirm email" en Supabase → Authentication → Providers → Email y volvé a intentar.',
       );
     }
-    const { error: e2 } = await supabase.rpc('claim_role', { p_role: 'admin' });
+    const { error: e2 } = await supabase.rpc('claim_role');
     if (e2) throw new Error(e2.message);
   },
 
   async verifyAdmin(pin: string): Promise<boolean> {
-    const { data, error } = await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: pin });
+    const { data, error } = await supabase.auth.signInWithPassword({ email: adminEmail(), password: pin });
     if (error || !data.session) return false;
     const prof = await getProfile(data.user!.id);
     const ok = prof?.role === 'admin' && prof.active;
@@ -226,38 +284,39 @@ const supaAuth = {
     if (pin.length < 6) throw new Error('El PIN debe tener al menos 6 dígitos');
     if (!adminCurrentPin) throw new Error('Falta confirmar con el PIN de administrador actual');
 
-    const { data, error } = await supabase.auth.signUp({ email: CASHIER_EMAIL, password: pin });
+    const adminEm = adminEmail();
+    const { data, error } = await supabase.auth.signUp({ email: cashierEmail(), password: pin });
     if (error) {
       if (!/already/i.test(error.message)) {
-        await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: adminCurrentPin }).catch(() => {});
+        await supabase.auth.signInWithPassword({ email: adminEm, password: adminCurrentPin }).catch(() => {});
         throw new Error(error.message);
       }
       // El email ya existe. Si nunca se completó el alta (quedó "fantasma" de
       // un intento anterior con el mismo PIN), la reclamamos ahora.
-      if (!(await getMeta()).cashierActive) {
+      if (!(await getTenantMeta()).cashierActive) {
         const { data: retry, error: e2 } = await supabase.auth.signInWithPassword({
-          email: CASHIER_EMAIL,
+          email: cashierEmail(),
           password: pin,
         });
         if (!e2 && retry.session) {
-          const { error: e3 } = await supabase.rpc('claim_role', { p_role: 'cashier' });
-          await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: adminCurrentPin }).catch(() => {});
+          const { error: e3 } = await supabase.rpc('claim_role');
+          await supabase.auth.signInWithPassword({ email: adminEm, password: adminCurrentPin }).catch(() => {});
           if (e3) throw new Error(e3.message);
           return;
         }
       }
-      await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: adminCurrentPin }).catch(() => {});
+      await supabase.auth.signInWithPassword({ email: adminEm, password: adminCurrentPin }).catch(() => {});
       throw new Error(
         'Ya existe una cuenta de vendedor con otro PIN. Para cambiarle el PIN, iniciá sesión como vendedor y usá "Cambiar mi PIN"; para desactivarla, usá el botón de abajo.',
       );
     }
     try {
       if (data.session) {
-        const { error: e2 } = await supabase.rpc('claim_role', { p_role: 'cashier' });
+        const { error: e2 } = await supabase.rpc('claim_role');
         if (e2) throw new Error(e2.message);
       }
     } finally {
-      const { error: e3 } = await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: adminCurrentPin });
+      const { error: e3 } = await supabase.auth.signInWithPassword({ email: adminEm, password: adminCurrentPin });
       if (e3) throw new Error('Vendedor creado, pero no se pudo restaurar la sesión de administrador: ' + e3.message);
     }
   },
@@ -267,10 +326,12 @@ const supaAuth = {
     if (error) throw new Error(error.message);
   },
 
-  /** ¿Ya existe la cuenta de vendedor (esté activa o no)? El email es fijo, así
-   *  que sólo se puede crear una vez; si existe pero está desactivada, se
-   *  reactiva con setCashierActive en vez de crearla de nuevo. */
+  /** ¿Ya existe la cuenta de vendedor de este kiosco (esté activa o no)? El
+   *  email es fijo, así que sólo se puede crear una vez; si existe pero está
+   *  desactivada, se reactiva con setCashierActive en vez de crearla de nuevo. */
   async cashierAccountExists(): Promise<boolean> {
+    // profiles sólo deja ver filas propias o (si sos admin) las de tu tenant,
+    // así que este count ya viene naturalmente acotado al kiosco activo.
     const { count } = await supabase
       .from('profiles')
       .select('id', { count: 'exact', head: true })
@@ -279,13 +340,13 @@ const supaAuth = {
   },
 
   async login(pin: string): Promise<Role | null> {
-    let { data, error } = await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: pin });
+    let { data, error } = await supabase.auth.signInWithPassword({ email: adminEmail(), password: pin });
     if (!error && data.session) {
       const prof = await getProfile(data.user!.id);
       if (prof?.role === 'admin' && prof.active) return 'admin';
       await supabase.auth.signOut();
     }
-    ({ data, error } = await supabase.auth.signInWithPassword({ email: CASHIER_EMAIL, password: pin }));
+    ({ data, error } = await supabase.auth.signInWithPassword({ email: cashierEmail(), password: pin }));
     if (!error && data.session) {
       const prof = await getProfile(data.user!.id);
       if (prof?.role === 'cashier' && prof.active) return 'cashier';
