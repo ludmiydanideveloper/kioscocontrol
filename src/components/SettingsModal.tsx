@@ -22,9 +22,10 @@ interface Props {
   onClose: () => void;
   onToast: (t: { message: string; type: 'info' | 'warning' | 'success' | 'error' }, ms?: number) => void;
   onDataRestored: () => void;
+  onAuthChanged: () => void;
 }
 
-export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, onDataRestored }) => {
+export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, onDataRestored, onAuthChanged }) => {
   const realAuth = isRealAuth();
   const [adminSet, setAdminSet] = useState(false);
   const [cashierSet, setCashierSet] = useState(false);
@@ -79,6 +80,7 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
       setAdminPin('');
       setDisablePin('');
       onToast({ message: 'PIN de administrador guardado', type: 'success' });
+      onAuthChanged();
     } catch (err: any) {
       onToast({ message: err.message || 'No se pudo guardar el PIN', type: 'error' }, 6000);
     } finally {
@@ -95,6 +97,7 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
     setCashierSet(false);
     setDisablePin('');
     onToast({ message: 'PIN desactivado', type: 'info' });
+    onAuthChanged();
   };
 
   const saveCashier = async () => {

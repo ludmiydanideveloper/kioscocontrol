@@ -114,6 +114,16 @@ export default function App() {
     [refreshProducts, refreshCustomers, refreshSuppliers, refreshCashSession],
   );
 
+  /** Re-lee el estado de auth sin recargar la página (lo usa Settings tras
+   *  crear/cambiar el PIN de admin, para que el header se actualice al toque). */
+  const refreshAuthState = useCallback(async () => {
+    const existingRole = await currentRole();
+    setRole(existingRole);
+    const authIsOn = await authRequired();
+    setAuthEnabled(authIsOn);
+    return existingRole;
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -122,13 +132,11 @@ export default function App() {
       if (cancelled) return;
       setBackendMode(chosen);
 
-      const existingRole = await currentRole();
+      const existingRole = await refreshAuthState();
       if (cancelled) return;
-      setRole(existingRole);
 
       const authIsOn = await authRequired();
       if (cancelled) return;
-      setAuthEnabled(authIsOn);
       const mustLogin = authIsOn && !existingRole;
       setNeedsAuth(mustLogin);
       setAuthChecked(true);
@@ -440,6 +448,7 @@ export default function App() {
             refreshProducts();
             refreshCustomers();
           }}
+          onAuthChanged={refreshAuthState}
         />
       )}
 

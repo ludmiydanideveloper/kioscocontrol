@@ -263,7 +263,11 @@ const supaAuth = {
 
   async currentRole(): Promise<Role | null> {
     const { data } = await supabase.auth.getSession();
-    if (!data.session) return null;
+    if (!data.session) {
+      // Antes de que exista un administrador, la app queda abierta (igual que
+      // en modo local) para que alguien pueda entrar a Configuración y crearlo.
+      return (await supaAuth.authRequired()) ? null : 'admin';
+    }
     const prof = await getProfile(data.session.user.id);
     if (!prof || !prof.active) return null;
     return prof.role;
