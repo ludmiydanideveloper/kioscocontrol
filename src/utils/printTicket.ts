@@ -6,9 +6,9 @@ const BUSINESS_KEY = 'kioscocontrol:businessName';
 
 export const getBusinessName = (): string => {
   try {
-    return localStorage.getItem(BUSINESS_KEY) || 'KioscoControl';
+    return localStorage.getItem(BUSINESS_KEY) || 'Kiosco';
   } catch {
-    return 'KioscoControl';
+    return 'Kiosco';
   }
 };
 

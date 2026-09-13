@@ -156,19 +156,37 @@ const supaAuth = {
     if (pin.length < 6) throw new Error('En la base central el PIN debe tener al menos 6 dígitos');
     const { data, error } = await supabase.auth.signUp({ email: ADMIN_EMAIL, password: pin });
     if (error) {
-      // Ya existe la cuenta admin → esto es un cambio de PIN, no un alta.
-      // (saveAdmin en Settings ya verificó el PIN actual antes de llegar acá,
-      // así que hay una sesión de admin activa para poder cambiarla.)
-      if (/already/i.test(error.message)) {
-        const { data: cur } = await supabase.auth.getSession();
-        const prof = cur.session ? await getProfile(cur.session.user.id) : null;
-        if (prof?.role === 'admin') {
-          await supaAuth.changeOwnPin(pin);
+      if (!/already/i.test(error.message)) throw new Error(error.message);
+
+      // El email ya existe. Dos casos posibles:
+      //  a) Cambio de PIN de un admin ya configurado (saveAdmin en Settings ya
+      //     verificó el PIN actual antes de llegar acá, así que hay sesión).
+      const { data: cur } = await supabase.auth.getSession();
+      const curProf = cur.session ? await getProfile(cur.session.user.id) : null;
+      if (curProf?.role === 'admin') {
+        await supaAuth.changeOwnPin(pin);
+        return;
+      }
+      //  b) Quedó una cuenta "fantasma" de un intento anterior que nunca llegó
+      //     a reclamar el rol (p.ej. se activó antes de desactivar "Confirm
+      //     email"). Si el PIN que acaban de escribir es el mismo de ese
+      //     intento, iniciamos sesión con él y completamos el alta solos.
+      if (!(await getMeta()).adminConfigured) {
+        const { data: retry, error: e2 } = await supabase.auth.signInWithPassword({
+          email: ADMIN_EMAIL,
+          password: pin,
+        });
+        if (!e2 && retry.session) {
+          const { error: e3 } = await supabase.rpc('claim_role', { p_role: 'admin' });
+          if (e3) throw new Error(e3.message);
           return;
         }
-        throw new Error('Ya existe un administrador configurado.');
+        throw new Error(
+          'Quedó un intento anterior sin terminar y no es el mismo PIN. Andá a Supabase → ' +
+            'Authentication → Users, borrá "admin@kioscocontrol.local" y volvé a activar el PIN.',
+        );
       }
-      throw new Error(error.message);
+      throw new Error('Ya existe un administrador configurado.');
     }
     if (!data.session) {
       throw new Error(
@@ -210,13 +228,28 @@ const supaAuth = {
 
     const { data, error } = await supabase.auth.signUp({ email: CASHIER_EMAIL, password: pin });
     if (error) {
-      await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: adminCurrentPin }).catch(() => {});
-      if (/already/i.test(error.message)) {
-        throw new Error(
-          'Ya existe una cuenta de vendedor. Para cambiarle el PIN, iniciá sesión como vendedor y usá "Cambiar mi PIN"; para desactivarla, usá el botón de abajo.',
-        );
+      if (!/already/i.test(error.message)) {
+        await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: adminCurrentPin }).catch(() => {});
+        throw new Error(error.message);
       }
-      throw new Error(error.message);
+      // El email ya existe. Si nunca se completó el alta (quedó "fantasma" de
+      // un intento anterior con el mismo PIN), la reclamamos ahora.
+      if (!(await getMeta()).cashierActive) {
+        const { data: retry, error: e2 } = await supabase.auth.signInWithPassword({
+          email: CASHIER_EMAIL,
+          password: pin,
+        });
+        if (!e2 && retry.session) {
+          const { error: e3 } = await supabase.rpc('claim_role', { p_role: 'cashier' });
+          await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: adminCurrentPin }).catch(() => {});
+          if (e3) throw new Error(e3.message);
+          return;
+        }
+      }
+      await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password: adminCurrentPin }).catch(() => {});
+      throw new Error(
+        'Ya existe una cuenta de vendedor con otro PIN. Para cambiarle el PIN, iniciá sesión como vendedor y usá "Cambiar mi PIN"; para desactivarla, usá el botón de abajo.',
+      );
     }
     try {
       if (data.session) {

@@ -194,7 +194,7 @@ export const SettingsModal: React.FC<Props> = ({ backendMode, onClose, onToast, 
             <Button
               variant="primary"
               onClick={() => {
-                setBusinessName(business.trim() || 'KioscoControl');
+                setBusinessName(business.trim() || 'Kiosco');
                 onToast({ message: 'Nombre guardado', type: 'success' });
               }}
             >

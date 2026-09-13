@@ -50,7 +50,7 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
       <div className="h-12 w-12 rounded-xl bg-ink text-white flex items-center justify-center mb-4">
         <Store className="h-6 w-6" strokeWidth={2} />
       </div>
-      <h1 className="text-lg font-semibold tracking-tight">KioscoControl</h1>
+      <h1 className="text-lg font-semibold tracking-tight">Kiosco</h1>
       <p className="mt-1 mb-7 text-[13px] text-muted">
         {checking
           ? 'Verificando…'

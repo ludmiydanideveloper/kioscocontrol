@@ -15,7 +15,7 @@ import { supabase } from './utils/supabase';
 import * as db from './utils/db';
 import type { BackendMode } from './utils/db';
 import { currentRole, authRequired, logout, isRealAuth, type Role } from './utils/auth';
-import { AlertCircle, ShieldCheck, WifiOff } from 'lucide-react';
+import { AlertCircle, WifiOff } from 'lucide-react';
 
 const ReportsView = lazy(() =>
   import('./components/ReportsView').then((m) => ({ default: m.ReportsView })),
@@ -295,8 +295,6 @@ export default function App() {
         receivablesTotal={receivablesTotal}
         payablesTotal={payablesTotal}
         cashOpen={!!cashSession}
-        backendMode={backendMode}
-        isConnected={isConnected}
         onOpenScanner={openScannerForPOS}
         isAudioMuted={isAudioMuted}
         onToggleAudio={handleToggleAudio}
@@ -455,20 +453,6 @@ export default function App() {
       {showChangePin && (
         <ChangePinModal onClose={() => setShowChangePin(false)} onToast={showToast} />
       )}
-
-      <footer className="hidden sm:block border-t border-line py-3 text-[12px] text-muted">
-        <div className="max-w-6xl mx-auto px-4 flex items-center justify-between">
-          <span className="flex items-center gap-1.5">
-            <ShieldCheck className="h-3.5 w-3.5 text-brand" strokeWidth={2} />
-            {backendMode === 'supabase'
-              ? 'Base central sincronizada'
-              : 'Modo local — datos en este dispositivo'}
-          </span>
-          <span className="nums">
-            {cashSession ? 'Caja abierta' : 'Caja cerrada'} · {products.length} productos
-          </span>
-        </div>
-      </footer>
     </div>
   );
 }

@@ -13,8 +13,8 @@ export default defineConfig(() => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.svg', 'favicon-32.png', 'apple-touch-icon.png'],
         manifest: {
-          name: 'KioscoControl — Inventario y Ventas',
-          short_name: 'KioscoControl',
+          name: 'Kiosco — Inventario y Ventas',
+          short_name: 'Kiosco',
           description:
             'Gestor de inventario y ventas para kioscos: POS con escáner, stock, fiado, caja y reportes.',
           lang: 'es-AR',

@@ -16,7 +16,6 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { cx } from './ui';
-import type { BackendMode } from '../utils/db';
 import type { Role } from '../utils/auth';
 
 export type NavTab =
@@ -37,8 +36,6 @@ interface HeaderNavProps {
   receivablesTotal: number;
   payablesTotal: number;
   cashOpen: boolean;
-  backendMode: BackendMode;
-  isConnected: boolean;
   onOpenScanner: () => void;
   isAudioMuted: boolean;
   onToggleAudio: () => void;
@@ -66,8 +63,6 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   receivablesTotal,
   payablesTotal,
   cashOpen,
-  backendMode,
-  isConnected,
   onOpenScanner,
   isAudioMuted,
   onToggleAudio,
@@ -87,13 +82,6 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
     return null;
   };
 
-  const conn =
-    backendMode === 'local'
-      ? { label: 'Local', cls: 'text-warn', dot: 'bg-warn' }
-      : isConnected
-      ? { label: 'En vivo', cls: 'text-brand', dot: 'bg-brand' }
-      : { label: 'Conectando', cls: 'text-muted', dot: 'bg-muted' };
-
   const iconBtn =
     'inline-flex h-9 w-9 items-center justify-center rounded-lg text-ink-soft hover:bg-surface-2 hover:text-ink transition-colors';
 
@@ -106,15 +94,10 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               <Store className="h-[18px] w-[18px]" strokeWidth={2} />
             </div>
             <div className="flex items-center gap-2 leading-none">
-              <span className="text-[15px] font-semibold tracking-tight">KioscoControl</span>
-              {isCashier ? (
+              <span className="text-[15px] font-semibold tracking-tight">Kiosco</span>
+              {isCashier && (
                 <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-soft">
                   Vendedor
-                </span>
-              ) : (
-                <span className={cx('hidden sm:flex items-center gap-1.5 text-[11px] font-medium', conn.cls)}>
-                  <span className={cx('h-1.5 w-1.5 rounded-full', conn.dot)} />
-                  {conn.label}
                 </span>
               )}
             </div>
