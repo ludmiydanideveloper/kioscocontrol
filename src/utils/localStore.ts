@@ -85,6 +85,18 @@ export function seedIfEmpty(
   }
 }
 
+/** Igual que seedIfEmpty pero siempre arranca de cero (para el link de demo:
+ *  cada vez que se abre, vuelve a este estado inicial, sin arrastrar lo que
+ *  se haya tocado en una demo anterior). */
+export function resetAndSeed(
+  products: Product[],
+  customers: Customer[],
+  suppliers: Supplier[] = [],
+  sales: Sale[] = [],
+) {
+  save({ ...empty(), products, customers, suppliers, sales });
+}
+
 export const localStore = {
   // ----- Productos -----
   async fetchProducts(): Promise<Product[]> {

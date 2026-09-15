@@ -5,7 +5,7 @@
 // Todos los componentes importan SÓLO desde acá.
 // ============================================================================
 import { supabase, hasSupabaseConfig } from './supabase';
-import { localStore, seedIfEmpty } from './localStore';
+import { localStore, seedIfEmpty, resetAndSeed } from './localStore';
 import { DEMO_PRODUCTS, DEMO_CUSTOMERS, DEMO_SUPPLIERS, DEMO_SALES } from './demoData';
 import type {
   Product,
@@ -26,6 +26,113 @@ let mode: BackendMode = 'local';
 
 export const getBackendMode = (): BackendMode => mode;
 export const isRealtimeAvailable = (): boolean => mode === 'supabase';
+
+/** Link de demo (?demo=1): siempre local, siempre arranca limpio, sin PIN —
+ *  para mostrar la app sin tocar los datos reales de ningún negocio. No usar
+ *  en un dispositivo que ya tenga datos reales guardados en modo local (los
+ *  reinicia cada vez que se abre). */
+export const isDemoMode = (): boolean => {
+  try {
+    return new URLSearchParams(window.location.search).get('demo') === '1';
+  } catch {
+    return false;
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Modo offline (sólo aplica en modo Supabase): si internet se corta a mitad
+// de uso, no volvemos al modo local con datos de prueba — seguimos mostrando
+// la última copia real que se pudo bajar, y las ventas que se hagan mientras
+// tanto quedan en una cola que se sincroniza sola apenas vuelve la señal.
+// ---------------------------------------------------------------------------
+const CACHE_PREFIX = 'kioscocontrol:cache:';
+const PENDING_SALES_KEY = 'kioscocontrol:pendingSales';
+
+function cacheSet(name: string, data: unknown): void {
+  try {
+    localStorage.setItem(CACHE_PREFIX + name, JSON.stringify(data));
+  } catch {
+    /* noop */
+  }
+}
+function cacheGet<T>(name: string): T | null {
+  try {
+    const raw = localStorage.getItem(CACHE_PREFIX + name);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** ¿Este error es "no hay conexión" (a diferencia de un error real del servidor)? */
+function isNetworkError(err: any): boolean {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  const msg = String(err?.message || err || '').toLowerCase();
+  return msg.includes('fetch') || msg.includes('network') || msg.includes('timeout') || msg.includes('offline');
+}
+
+function readPendingRaw(): Omit<Sale, 'status'>[] {
+  try {
+    const raw = localStorage.getItem(PENDING_SALES_KEY);
+    return raw ? (JSON.parse(raw) as Omit<Sale, 'status'>[]) : [];
+  } catch {
+    return [];
+  }
+}
+function writePendingSales(list: Omit<Sale, 'status'>[]): void {
+  try {
+    localStorage.setItem(PENDING_SALES_KEY, JSON.stringify(list));
+  } catch {
+    /* noop */
+  }
+}
+
+/** Aplica el descuento de stock ya mismo en la copia local, para que una
+ *  segunda venta offline (antes de sincronizar) no sobrevenda. */
+function applyOptimisticStock(sale: Omit<Sale, 'status'>): void {
+  const products = cacheGet<Product[]>('products');
+  if (!products) return;
+  for (const item of sale.items) {
+    const p = products.find((x) => x.id === item.productId);
+    if (p) p.stock = Math.max(0, p.stock - item.quantity);
+  }
+  cacheSet('products', products);
+  if (sale.paymentMethod === 'fiado' && sale.customerId) {
+    const customers = cacheGet<Customer[]>('customers');
+    const c = customers?.find((x) => x.id === sale.customerId);
+    if (c) {
+      c.balance += sale.total;
+      cacheSet('customers', customers);
+    }
+  }
+}
+
+/** Cuántas ventas quedaron pendientes de subir a la base central. */
+export function pendingSalesCount(): number {
+  return readPendingRaw().length;
+}
+
+/** Intenta subir las ventas que quedaron guardadas mientras no había señal. */
+export async function syncPendingSales(): Promise<{ synced: number; remaining: number }> {
+  if (mode !== 'supabase') return { synced: 0, remaining: 0 };
+  const queue = readPendingRaw();
+  if (queue.length === 0) return { synced: 0, remaining: 0 };
+  let synced = 0;
+  let i = 0;
+  for (; i < queue.length; i++) {
+    try {
+      const { error } = await supabase.rpc('process_sale', { payload: queue[i] });
+      if (error && !/duplicate key|already exists/i.test(error.message)) throw error;
+      synced++;
+    } catch (err) {
+      if (isNetworkError(err)) break; // seguimos sin conexión, el resto queda para después
+      console.error('Venta pendiente con error, se descarta:', err); // eslint-disable-line no-console
+    }
+  }
+  const remaining = queue.slice(i);
+  writePendingSales(remaining);
+  return { synced, remaining: remaining.length };
+}
 
 /** ¿Hay datos guardados en el store local de este navegador? */
 export function hasLocalData(): boolean {
@@ -76,6 +183,17 @@ export async function migrateLocalToSupabase(): Promise<Record<string, number>> 
 
 /** Health check al arrancar. Devuelve el modo elegido. */
 export async function initBackend(): Promise<BackendMode> {
+  if (isDemoMode()) {
+    mode = 'local';
+    try {
+      localStorage.removeItem('kioscocontrol:auth');
+      sessionStorage.removeItem('kioscocontrol:session');
+    } catch {
+      /* noop */
+    }
+    resetAndSeed(DEMO_PRODUCTS, DEMO_CUSTOMERS, DEMO_SUPPLIERS, DEMO_SALES);
+    return mode;
+  }
   if (hasSupabaseConfig) {
     try {
       // Verifica el schema NUEVO (no sólo que exista `products`).
@@ -88,11 +206,23 @@ export async function initBackend(): Promise<BackendMode> {
         mode = 'supabase';
         return mode;
       }
+      const firstError = prod.error || cash.error || exp.error;
+      // Sin conexión (no un problema real de schema/config): si este equipo
+      // ya había podido bajar datos antes, nos quedamos en modo Supabase y
+      // servimos esa última copia — nunca reemplazarla por datos de prueba.
+      if (isNetworkError(firstError) && cacheGet('products')) {
+        mode = 'supabase';
+        return mode;
+      }
       console.warn(
         'Falta aplicar la última versión de schema.sql en Supabase — usando modo local. Detalle:',
-        prod.error?.message || cash.error?.message || exp.error?.message,
+        firstError?.message,
       );
     } catch (err) {
+      if (isNetworkError(err) && cacheGet('products')) {
+        mode = 'supabase';
+        return mode;
+      }
       console.warn('Supabase inaccesible, usando modo local:', err);
     }
   }
@@ -106,13 +236,17 @@ export async function initBackend(): Promise<BackendMode> {
 // ---------------------------------------------------------------------------
 const supa = {
   async fetchProducts(): Promise<Product[]> {
-    const { data, error } = await supabase
-      .from('products')
-      .select('*')
-      .eq('isActive', true)
-      .order('name');
-    if (error) throw error;
-    return data || [];
+    try {
+      const { data, error } = await supabase.from('products').select('*').eq('isActive', true).order('name');
+      if (error) throw error;
+      const rows = data || [];
+      cacheSet('products', rows);
+      return rows;
+    } catch (err) {
+      const cached = isNetworkError(err) ? cacheGet<Product[]>('products') : null;
+      if (cached) return cached;
+      throw err;
+    }
   },
 
   async saveProduct(product: Partial<Product>): Promise<void> {
@@ -156,8 +290,18 @@ const supa = {
   },
 
   async processSale(sale: Omit<Sale, 'status'>): Promise<void> {
-    const { error } = await supabase.rpc('process_sale', { payload: sale });
-    if (error) throw new Error(error.message || 'No se pudo procesar la venta');
+    try {
+      const { error } = await supabase.rpc('process_sale', { payload: sale });
+      if (error) throw error;
+    } catch (err) {
+      if (!isNetworkError(err)) throw new Error((err as any)?.message || 'No se pudo procesar la venta');
+      // Sin conexión: la guardamos para subir apenas vuelva la señal, y
+      // descontamos el stock ya mismo en la copia local para no sobrevender.
+      const queue = readPendingRaw();
+      queue.push(sale);
+      writePendingSales(queue);
+      applyOptimisticStock(sale);
+    }
   },
 
   async voidSale(saleId: string, reason: string): Promise<void> {
@@ -202,9 +346,17 @@ const supa = {
   },
 
   async fetchCustomers(): Promise<Customer[]> {
-    const { data, error } = await supabase.from('customers').select('*').order('name');
-    if (error) throw new Error(error.message);
-    return (data || []) as Customer[];
+    try {
+      const { data, error } = await supabase.from('customers').select('*').order('name');
+      if (error) throw error;
+      const rows = (data || []) as Customer[];
+      cacheSet('customers', rows);
+      return rows;
+    } catch (err) {
+      const cached = isNetworkError(err) ? cacheGet<Customer[]>('customers') : null;
+      if (cached) return cached;
+      throw new Error((err as any)?.message || String(err));
+    }
   },
 
   async saveCustomer(customer: Partial<Customer>): Promise<Customer> {
@@ -252,9 +404,17 @@ const supa = {
 
   // ----- Proveedores -----
   async fetchSuppliers(): Promise<Supplier[]> {
-    const { data, error } = await supabase.from('suppliers').select('*').order('name');
-    if (error) throw new Error(error.message);
-    return (data || []) as Supplier[];
+    try {
+      const { data, error } = await supabase.from('suppliers').select('*').order('name');
+      if (error) throw error;
+      const rows = (data || []) as Supplier[];
+      cacheSet('suppliers', rows);
+      return rows;
+    } catch (err) {
+      const cached = isNetworkError(err) ? cacheGet<Supplier[]>('suppliers') : null;
+      if (cached) return cached;
+      throw new Error((err as any)?.message || String(err));
+    }
   },
 
   async saveSupplier(supplier: Partial<Supplier>): Promise<Supplier> {
@@ -333,14 +493,21 @@ const supa = {
   },
 
   async fetchOpenCashSession(): Promise<CashSession | null> {
-    const { data, error } = await supabase
-      .from('cash_sessions')
-      .select('*')
-      .eq('status', 'open')
-      .order('openedAt', { ascending: false })
-      .limit(1);
-    if (error) throw new Error(error.message);
-    return (data && data[0]) || null;
+    try {
+      const { data, error } = await supabase
+        .from('cash_sessions')
+        .select('*')
+        .eq('status', 'open')
+        .order('openedAt', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      const row = (data && data[0]) || null;
+      cacheSet('cashSession', row);
+      return row;
+    } catch (err) {
+      if (isNetworkError(err)) return cacheGet<CashSession | null>('cashSession') ?? null;
+      throw new Error((err as any)?.message || String(err));
+    }
   },
 
   async fetchCashSessions(limit = 30): Promise<CashSession[]> {

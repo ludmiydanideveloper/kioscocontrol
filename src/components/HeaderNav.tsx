@@ -16,6 +16,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { cx } from './ui';
+import { isDemoMode } from '../utils/db';
 import type { Role } from '../utils/auth';
 
 export type NavTab =
@@ -102,6 +103,11 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               {isCashier && (
                 <span className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-ink-soft">
                   Vendedor
+                </span>
+              )}
+              {isDemoMode() && (
+                <span className="rounded-md bg-brand-soft px-1.5 py-0.5 text-[11px] font-medium text-brand">
+                  Modo demo
                 </span>
               )}
             </div>

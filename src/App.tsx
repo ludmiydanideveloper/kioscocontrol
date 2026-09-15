@@ -50,6 +50,9 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [backendMode, setBackendMode] = useState<BackendMode>('local');
   const [isAudioMuted, setIsAudioMuted] = useState(false);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [pendingSales, setPendingSales] = useState(0);
+  const [syncing, setSyncing] = useState(false);
 
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [scannerMode, setScannerMode] = useState<'pos' | 'custom'>('pos');
@@ -110,10 +113,46 @@ export default function App() {
 
   const realtimeChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
+  /** Sube las ventas que quedaron guardadas mientras no había conexión. */
+  const trySyncPending = useCallback(async () => {
+    if (db.getBackendMode() !== 'supabase' || syncing) return;
+    if (db.pendingSalesCount() === 0) return;
+    setSyncing(true);
+    try {
+      const { synced, remaining } = await db.syncPendingSales();
+      setPendingSales(remaining);
+      if (synced > 0) {
+        showToast({ message: `${synced} venta${synced === 1 ? '' : 's'} sincronizada${synced === 1 ? '' : 's'}`, type: 'success' });
+        await Promise.all([refreshProducts(), refreshCustomers(), refreshCashSession()]);
+      }
+    } finally {
+      setSyncing(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncing, refreshProducts, refreshCustomers, refreshCashSession]);
+
+  // Detecta cuándo se corta/vuelve la conexión y sincroniza solo al volver.
+  useEffect(() => {
+    const onOnline = () => {
+      setIsOffline(false);
+      trySyncPending();
+    };
+    const onOffline = () => setIsOffline(true);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trySyncPending]);
+
   const loadAppData = useCallback(
     async (chosen: BackendMode) => {
       await Promise.all([refreshProducts(), refreshCustomers(), refreshSuppliers(), refreshCashSession()]);
       setIsLoading(false);
+      setPendingSales(db.pendingSalesCount());
+      if (navigator.onLine) trySyncPending();
 
       if (chosen === 'supabase' && !realtimeChannelRef.current) {
         realtimeChannelRef.current = supabase
@@ -125,7 +164,7 @@ export default function App() {
           .subscribe((status) => setIsConnected(status === 'SUBSCRIBED'));
       }
     },
-    [refreshProducts, refreshCustomers, refreshSuppliers, refreshCashSession],
+    [refreshProducts, refreshCustomers, refreshSuppliers, refreshCashSession, trySyncPending],
   );
 
   /** Re-lee el estado de auth sin recargar la página (lo usa Settings tras
@@ -329,6 +368,24 @@ export default function App() {
         onChangeMyPin={isCashier && isRealAuth() ? () => setShowChangePin(true) : undefined}
       />
 
+      {backendMode === 'supabase' && (isOffline || pendingSales > 0) && (
+        <div className="bg-warn-soft border-b border-warn/25 px-4 py-2 text-[13px] font-medium text-warn flex items-center justify-center gap-2 text-center">
+          <WifiOff className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
+          {isOffline
+            ? pendingSales > 0
+              ? `Sin conexión — vendiendo con los últimos datos guardados (${pendingSales} venta${pendingSales === 1 ? '' : 's'} pendiente${pendingSales === 1 ? '' : 's'} de subir).`
+              : 'Sin conexión — vendiendo con los últimos datos guardados. Se sincroniza solo al volver la señal.'
+            : syncing
+            ? 'Sincronizando ventas pendientes…'
+            : `${pendingSales} venta${pendingSales === 1 ? '' : 's'} pendiente${pendingSales === 1 ? '' : 's'} de subir.`}
+          {!isOffline && pendingSales > 0 && !syncing && (
+            <button onClick={trySyncPending} className="underline underline-offset-2 font-semibold">
+              Reintentar
+            </button>
+          )}
+        </div>
+      )}
+
       {toast && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px] font-medium text-ink pop-shadow max-w-[calc(100vw-2rem)]">
           <AlertCircle
@@ -376,6 +433,7 @@ export default function App() {
                 onOpenScanner={openScannerForPOS}
                 onSaleCompleted={async () => {
                   await Promise.all([refreshProducts(), refreshCustomers(), refreshCashSession()]);
+                  setPendingSales(db.pendingSalesCount());
                 }}
                 onCustomersChanged={refreshCustomers}
                 onToast={showToast}

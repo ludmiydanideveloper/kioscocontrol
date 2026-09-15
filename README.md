@@ -178,7 +178,19 @@ escribir datos de otro kiosco.
   En modo local el PIN es sólo un hash en el navegador (disuade, no protege).
 
 ### Extras
-- **PWA**: instalable en el celular/tablet, funciona sin conexión.
+- **PWA**: instalable en el celular/tablet ("Agregar a pantalla de inicio" en
+  Android/Chrome, "Compartir → Agregar a pantalla de inicio" en iOS/Safari),
+  funciona sin conexión.
+- **Modo offline** (base central): si se corta internet a mitad de uso, la
+  app sigue mostrando la última copia real bajada (no datos de prueba) y deja
+  seguir vendiendo — cada venta hecha sin señal queda guardada en el
+  dispositivo y se sincroniza sola apenas vuelve la conexión (banner arriba
+  con el conteo de ventas pendientes; también hay un botón "Reintentar").
+- **Modo demo**: `https://kioscocontrol.vercel.app/?demo=1` abre la app en
+  modo local con catálogo de ejemplo, sin pedir PIN y arrancando de cero cada
+  vez que se abre — para mostrarla a alguien sin tocar los datos reales de
+  ningún kiosco. No usar ese link en un equipo que ya tenga datos reales
+  guardados en modo local (los reinicia).
 - **Impresión de ticket 58mm** para comandera térmica (botón "Ticket" tras cada venta).
 - **Backup / restore** de datos en JSON, y **subida del store local a la base central**
   (Configuración) para cuando se trabajó offline.
