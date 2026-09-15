@@ -155,16 +155,32 @@ export default function App() {
       if (navigator.onLine) trySyncPending();
 
       if (chosen === 'supabase' && !realtimeChannelRef.current) {
-        realtimeChannelRef.current = supabase
+        let channel = supabase
           .channel('kiosco-realtime')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, refreshProducts)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, refreshCustomers)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'suppliers' }, refreshSuppliers)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'cash_sessions' }, refreshCashSession)
-          .subscribe((status) => setIsConnected(status === 'SUBSCRIBED'));
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'cash_sessions' }, refreshCashSession);
+        if (role === 'admin') {
+          channel = channel.on(
+            'postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'employee_sessions' },
+            async (payload) => {
+              const employeeId = (payload.new as any)?.employeeId;
+              const event = (payload.new as any)?.event;
+              let name = 'Un empleado';
+              if (employeeId) {
+                const { data } = await supabase.from('profiles').select('name').eq('id', employeeId).maybeSingle();
+                name = data?.name || 'Un empleado';
+              }
+              showToast({ message: `${name} ${event === 'login' ? 'entró' : 'salió'}`, type: 'info' }, 4500);
+            },
+          );
+        }
+        realtimeChannelRef.current = channel.subscribe((status) => setIsConnected(status === 'SUBSCRIBED'));
       }
     },
-    [refreshProducts, refreshCustomers, refreshSuppliers, refreshCashSession, trySyncPending],
+    [refreshProducts, refreshCustomers, refreshSuppliers, refreshCashSession, trySyncPending, role, showToast],
   );
 
   /** Re-lee el estado de auth sin recargar la página (lo usa Settings tras

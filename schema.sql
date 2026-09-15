@@ -253,7 +253,9 @@ begin
 exception when undefined_table then null;
 end $$;
 
--- Agrega tenantId (con backfill al tenant 'default') a cada tabla de negocio.
+-- Agrega tenantId + createdBy (con backfill al tenant 'default') a cada
+-- tabla de negocio — createdBy queda anotado quién (qué PIN/cuenta) hizo
+-- cada venta/movimiento/ajuste, aunque sea un empleado.
 do $$
 declare
   t text;
@@ -267,6 +269,7 @@ begin
     execute format('update public.%I set "tenantId" = ''default'' where "tenantId" is null;', t);
     execute format('alter table public.%I alter column "tenantId" set not null;', t);
     execute format('create index if not exists %I on public.%I ("tenantId");', t || '_tenant_idx', t);
+    execute format('alter table public.%I add column if not exists "createdBy" uuid references auth.users(id) on delete set null;', t);
     begin
       execute format(
         'alter table public.%I add constraint %I foreign key ("tenantId") references public.tenants(id) on delete cascade;',
@@ -277,7 +280,9 @@ begin
   end loop;
 end $$;
 
--- Completa tenantId solo en cada alta (bypassea lo que mande el cliente).
+-- Completa tenantId y createdBy solos en cada alta (bypassea lo que mande
+-- el cliente): no se puede vender "a nombre de" otro tenant ni de otro
+-- usuario.
 create or replace function public.stamp_tenant()
 returns trigger language plpgsql as $$
 begin
@@ -285,6 +290,7 @@ begin
   if new."tenantId" is null then
     raise exception 'No se pudo determinar el negocio (tenant) del usuario';
   end if;
+  new."createdBy" := auth.uid();
   return new;
 end;
 $$;
@@ -434,35 +440,42 @@ grant execute on function public.set_cashier_active(boolean) to authenticated;
 -- sintético al azar (el empleado nunca lo ve ni lo necesita, entra con PIN).
 -- ============================================================================
 
--- Crea un negocio nuevo y deja al usuario autenticado (ya logueado con su
--- email real) como su administrador. Se usa una sola vez, justo después de
--- registrarse.
-create or replace function public.create_tenant(p_slug text, p_name text)
+-- Vincula al usuario autenticado (ya logueado con SU email real) como
+-- administrador de un tenant que YA EXISTE — lo tiene que haber creado antes
+-- el dueño de la plataforma con onboard-tenant.sql (a diferencia de la
+-- versión vieja de esta función, acá NO se puede inventar un negocio nuevo
+-- ni un código que no te haya dado quien administra la app).
+drop function if exists public.create_tenant(text, text);
+create or replace function public.claim_owner(p_slug text)
 returns void
 language plpgsql security definer set search_path = public as $$
 declare
-  v_slug text := lower(regexp_replace(coalesce(p_slug, ''), '[^a-z0-9-]', '', 'g'));
-  v_name text := trim(coalesce(p_name, ''));
+  v_slug   text := lower(regexp_replace(coalesce(p_slug, ''), '[^a-z0-9-]', '', 'g'));
+  v_tenant public.tenants%rowtype;
 begin
   if auth.uid() is null then raise exception 'No autenticado'; end if;
-  if v_slug = '' or v_slug = 'default' then raise exception 'Código de kiosco inválido'; end if;
-  if v_name = '' then raise exception 'Falta el nombre del kiosco'; end if;
+  if v_slug = '' then raise exception 'Falta el código del kiosco'; end if;
   if exists (select 1 from public.profiles where id = auth.uid()) then
     raise exception 'Esta cuenta ya pertenece a un kiosco';
   end if;
-  if exists (select 1 from public.tenants where id = v_slug) then
-    raise exception 'Ese código ya está en uso, probá con otro';
+
+  select * into v_tenant from public.tenants where id = v_slug and active for update;
+  if v_tenant.id is null then
+    raise exception 'No encontramos ese código. Pedíselo a quien te dio de alta.';
+  end if;
+  if v_tenant.admin_configured then
+    raise exception 'Ese kiosco ya tiene un administrador.';
   end if;
 
-  insert into public.tenants (id, slug, name, admin_configured)
-  values (v_slug, v_slug, v_name, true);
-
   insert into public.profiles (id, role, active, "tenantId", email)
-  values (auth.uid(), 'admin', true, v_slug, (select email from auth.users where id = auth.uid()));
+  values (auth.uid(), 'admin', true, v_tenant.id, (select email from auth.users where id = auth.uid()))
+  on conflict (id) do update set role = 'admin', active = true, "tenantId" = excluded."tenantId";
+
+  update public.tenants set admin_configured = true where id = v_tenant.id;
 end;
 $$;
-revoke all on function public.create_tenant(text, text) from public, anon;
-grant execute on function public.create_tenant(text, text) to authenticated;
+revoke all on function public.claim_owner(text) from public, anon;
+grant execute on function public.claim_owner(text) to authenticated;
 
 -- Vincula la cuenta recién creada (email sintético al azar, dado de alta por
 -- un admin) como empleado del tenant al que pertenece ESE email —
@@ -531,6 +544,46 @@ language sql security definer stable set search_path = public as $$
    limit 20;
 $$;
 grant execute on function public.list_login_emails(text) to authenticated, anon;
+
+-- ============================================================================
+-- Entradas/salidas de empleados: queda registrado cuándo cada PIN entró y
+-- salió. El admin lo ve en tiempo real (Realtime) mientras tiene la app
+-- abierta, y como historial en Configuración → Empleados.
+-- ============================================================================
+create table if not exists public.employee_sessions (
+  id           text primary key default gen_random_uuid()::text,
+  "tenantId"   text not null references public.tenants(id) on delete cascade,
+  "employeeId" uuid not null references public.profiles(id) on delete cascade,
+  event        text not null check (event in ('login','logout')),
+  "createdAt"  timestamptz not null default now()
+);
+create index if not exists employee_sessions_tenant_idx
+  on public.employee_sessions ("tenantId", "createdAt" desc);
+
+create or replace function public.log_employee_session(p_event text)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v_tenant_id text := public.current_tenant_id();
+begin
+  if v_tenant_id is null then raise exception 'No autenticado'; end if;
+  if p_event not in ('login','logout') then raise exception 'Evento inválido'; end if;
+  insert into public.employee_sessions (id, "tenantId", "employeeId", event)
+  values (gen_random_uuid()::text, v_tenant_id, auth.uid(), p_event);
+end;
+$$;
+grant execute on function public.log_employee_session(text) to authenticated;
+
+alter table public.employee_sessions enable row level security;
+drop policy if exists employee_sessions_select on public.employee_sessions;
+create policy employee_sessions_select on public.employee_sessions for select
+  using (public.is_admin() and "tenantId" = public.current_tenant_id());
+-- Sin policies de insert/update/delete: sólo log_employee_session() escribe acá.
+
+do $$
+begin
+  execute 'alter publication supabase_realtime add table public.employee_sessions';
+exception when others then null;
+end $$;
 
 alter table public.profiles enable row level security;
 drop policy if exists profiles_select on public.profiles;

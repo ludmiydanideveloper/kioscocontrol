@@ -365,7 +365,10 @@ const supaAuth = {
       ({ data, error } = await supabase.auth.signInWithPassword({ email: row.email, password: pin }));
       if (!error && data.session) {
         const prof = await getProfile(data.user!.id);
-        if (prof?.role === 'cashier' && prof.active) return 'cashier';
+        if (prof?.role === 'cashier' && prof.active) {
+          supabase.rpc('log_employee_session', { p_event: 'login' }).then(() => {});
+          return 'cashier';
+        }
         await supabase.auth.signOut();
       }
     }
@@ -385,6 +388,19 @@ const supaAuth = {
   },
 
   async logout(): Promise<void> {
+    // Si es un empleado, anotamos la salida ANTES de cerrar sesión (necesita
+    // estar autenticado para poder escribir el registro).
+    const { data } = await supabase.auth.getSession();
+    if (data.session) {
+      const prof = await getProfile(data.session.user.id);
+      if (prof?.role === 'cashier') {
+        try {
+          await supabase.rpc('log_employee_session', { p_event: 'logout' });
+        } catch {
+          /* noop: si falla, no bloqueamos el logout */
+        }
+      }
+    }
     await supabase.auth.signOut();
   },
 
@@ -400,13 +416,12 @@ const supaAuth = {
 // Alta de kiosco por email real + panel de empleados (sólo modo Supabase).
 // ---------------------------------------------------------------------------
 
-/** Registra al dueño con SU email real y crea su negocio. */
-export async function ownerSignUp(
-  email: string,
-  password: string,
-  slug: string,
-  businessName: string,
-): Promise<void> {
+/**
+ * Registra al dueño con SU email real y lo vincula como admin de un kiosco
+ * que YA EXISTE (lo tiene que haber dado de alta antes quien administra la
+ * app, con onboard-tenant.sql) — no se puede inventar un negocio nuevo.
+ */
+export async function ownerSignUp(email: string, password: string, slug: string): Promise<void> {
   if (getBackendMode() !== 'supabase') throw new Error('No disponible en modo local');
   if (password.length < 6) throw new Error('La contraseña debe tener al menos 6 caracteres');
   const { data, error } = await supabase.auth.signUp({ email, password });
@@ -414,7 +429,7 @@ export async function ownerSignUp(
   if (!data.session) {
     throw new Error('Revisá tu email para confirmar la cuenta antes de continuar.');
   }
-  const { error: e2 } = await supabase.rpc('create_tenant', { p_slug: slug, p_name: businessName });
+  const { error: e2 } = await supabase.rpc('claim_owner', { p_slug: slug });
   if (e2) {
     await supabase.auth.signOut().catch(() => {});
     throw new Error(e2.message);
@@ -482,6 +497,32 @@ export async function listEmployees(): Promise<Employee[]> {
     .order('createdAt', { ascending: true });
   if (error) throw new Error(error.message);
   return (data || []).map((r) => ({ ...r, permissions: r.permissions || {} })) as Employee[];
+}
+
+export interface EmployeeSessionEvent {
+  id: string;
+  employeeId: string;
+  employeeName: string | null;
+  event: 'login' | 'logout';
+  createdAt: string;
+}
+
+/** Últimas entradas/salidas de empleados del negocio propio. */
+export async function listEmployeeSessions(limit = 30): Promise<EmployeeSessionEvent[]> {
+  if (getBackendMode() !== 'supabase') return [];
+  const { data, error } = await supabase
+    .from('employee_sessions')
+    .select('id,employeeId,event,createdAt,profiles:employeeId(name)')
+    .order('createdAt', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return (data || []).map((r: any) => ({
+    id: r.id,
+    employeeId: r.employeeId,
+    employeeName: r.profiles?.name || null,
+    event: r.event,
+    createdAt: r.createdAt,
+  }));
 }
 
 /** Edita nombre/permisos/activo de un empleado del negocio propio. */

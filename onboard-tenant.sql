@@ -2,8 +2,10 @@
 -- Alta de un kiosco nuevo (tenant) en KioscoControl.
 -- Corré esto en el SQL Editor de Supabase DESPUÉS de aplicar schema.sql.
 --
--- Con esto alcanza: el dueño del negocio nuevo se activa SU PROPIA cuenta de
--- administrador desde la app (vos no elegís ni ves su PIN). Pasos:
+-- Vos sos el único que puede dar de alta un kiosco nuevo — nadie se puede
+-- registrar solo sin este paso (la app ya no deja "inventar" un código).
+-- El dueño después se activa SU PROPIA cuenta con SU email real (vos no
+-- elegís ni ves su contraseña). Pasos:
 --
 -- 1) Acá abajo, completá `slug` y `name` y ejecutá el bloque.
 --    <slug> es un código corto sin espacios ni mayúsculas para ese negocio
@@ -12,15 +14,15 @@
 --
 -- 2) Pasále al dueño el link de la app y el código (slug) que elegiste. Él:
 --      a) Abre https://kioscocontrol.vercel.app
---      b) Toca "¿Es otro kiosco? Cambiar" en la pantalla de PIN, escribe el
---         código y confirma.
---      c) La app le va a aparecer "abierta" (todavía no hay admin). Entra a
---         Configuración → PIN de administrador → elige su propio PIN
---         (6 a 8 dígitos) → Activar.
+--      b) Toca "¿No tenés cuenta? Activá tu kiosco", pone el código que le
+--         diste, su email y una contraseña.
+--      c) Queda como administrador de ESE negocio — separado del resto.
 --
--- Listo — ese negocio ya tiene su administrador, con sus datos 100% separados
--- de cualquier otro kiosco. Si más adelante quiere un PIN de vendedor, lo
--- activa él mismo desde Configuración, igual que hacés vos en el tuyo.
+-- Si el código no coincide con uno que vos hayas creado acá, o ese kiosco ya
+-- tiene administrador, la app se lo rechaza.
+--
+-- Si más adelante el dueño quiere un PIN de empleado, lo activa él mismo
+-- desde Configuración → Empleados.
 -- ============================================================================
 
 insert into public.tenants (id, slug, name)

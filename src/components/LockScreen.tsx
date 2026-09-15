@@ -15,15 +15,6 @@ import { getBackendMode } from '../utils/db';
 import { soundFX } from '../utils/audio';
 import { cx, Input, Button } from './ui';
 
-const slugify = (s: string) =>
-  s
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-
 type Mode = 'pin' | 'switch' | 'owner-login' | 'signup';
 
 export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnlock }) => {
@@ -119,10 +110,8 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
     }
   };
 
-  // ---- Crear kiosco nuevo ----
-  const [signupName, setSignupName] = useState('');
+  // ---- Activar el kiosco que ya te dieron de alta ----
   const [signupSlug, setSignupSlug] = useState('');
-  const [slugTouched, setSlugTouched] = useState(false);
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupBusy, setSignupBusy] = useState(false);
@@ -130,18 +119,16 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
 
   const doSignup = async () => {
     setSignupError('');
-    const slug = slugify(signupSlug || signupName);
-    if (!signupName.trim()) return setSignupError('Poné el nombre de tu kiosco.');
-    if (!slug) return setSignupError('El código del kiosco quedó vacío, probá con otro nombre.');
+    if (!signupSlug.trim()) return setSignupError('Poné el código que te dieron.');
     if (!signupEmail || !signupPassword) return setSignupError('Completá tu email y una contraseña.');
     if (signupPassword.length < 6) return setSignupError('La contraseña debe tener al menos 6 caracteres.');
     setSignupBusy(true);
     try {
-      await ownerSignUp(signupEmail, signupPassword, slug, signupName.trim());
+      await ownerSignUp(signupEmail, signupPassword, signupSlug.trim());
       soundFX.playBarcodeBeep();
       onUnlock('admin');
     } catch (err: any) {
-      setSignupError(err.message || 'No se pudo crear el kiosco.');
+      setSignupError(err.message || 'No se pudo activar el kiosco.');
     } finally {
       setSignupBusy(false);
     }
@@ -216,26 +203,14 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
   if (mode === 'signup') {
     return shell(
       <Building2 className="h-6 w-6" strokeWidth={2} />,
-      'Creá tu kiosco',
-      'Gratis, en un minuto. Vos administrás tu propio negocio, separado de cualquier otro.',
+      'Activá tu kiosco',
+      'Usá el código que te dio quien te dio de alta, y elegí tu email y contraseña de administrador.',
       <>
         <Input
           autoFocus
-          value={signupName}
-          onChange={(e) => {
-            setSignupName(e.target.value);
-            if (!slugTouched) setSignupSlug(slugify(e.target.value));
-          }}
-          placeholder="Nombre del kiosco"
-        />
-        <Input
           value={signupSlug}
-          onChange={(e) => {
-            setSlugTouched(true);
-            setSignupSlug(e.target.value);
-          }}
-          placeholder="Código único (se arma solo)"
-          className="nums"
+          onChange={(e) => setSignupSlug(e.target.value)}
+          placeholder="Código de tu kiosco"
         />
         <Input
           type="email"
@@ -252,7 +227,7 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
         />
         {signupError && <p className="text-[13px] font-medium text-danger">{signupError}</p>}
         <Button variant="primary" className="w-full" onClick={doSignup} disabled={signupBusy}>
-          {signupBusy ? 'Creando…' : 'Crear mi kiosco'}
+          {signupBusy ? 'Activando…' : 'Activar mi kiosco'}
         </Button>
         <Button variant="ghost" className="w-full" onClick={() => setMode('pin')}>
           Volver
@@ -338,7 +313,7 @@ export const LockScreen: React.FC<{ onUnlock: (role: Role) => void }> = ({ onUnl
             }}
             className="text-muted hover:text-ink underline underline-offset-2"
           >
-            ¿No tenés cuenta? Creá tu kiosco
+            ¿Te dieron un código? Activá tu kiosco
           </button>
           <button
             onClick={() => {

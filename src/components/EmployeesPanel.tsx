@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { UserPlus, Pencil, KeyRound } from 'lucide-react';
-import { listEmployees, createEmployee, updateEmployee } from '../utils/auth';
+import { UserPlus, Pencil, KeyRound, LogIn, LogOut, History } from 'lucide-react';
+import { listEmployees, createEmployee, updateEmployee, listEmployeeSessions } from '../utils/auth';
+import type { EmployeeSessionEvent } from '../utils/auth';
 import type { Employee, EmployeePermissions } from '../types';
 import { PERMISSION_LABELS } from '../types';
 import { Button, Input, Label, Modal, Badge, Empty, cx } from './ui';
@@ -41,6 +42,8 @@ const PermissionCheckboxes: React.FC<{
 
 export const EmployeesPanel: React.FC<Props> = ({ onToast }) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [sessions, setSessions] = useState<EmployeeSessionEvent[]>([]);
+  const [showActivity, setShowActivity] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState<Employee | null>(null);
@@ -58,6 +61,11 @@ export const EmployeesPanel: React.FC<Props> = ({ onToast }) => {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!showActivity) return;
+    listEmployeeSessions().then(setSessions).catch(() => {});
+  }, [showActivity]);
 
   return (
     <div className="space-y-3">
@@ -99,6 +107,45 @@ export const EmployeesPanel: React.FC<Props> = ({ onToast }) => {
               </Button>
             </div>
           ))}
+        </div>
+      )}
+
+      {employees.length > 0 && (
+        <div>
+          <button
+            onClick={() => setShowActivity((v) => !v)}
+            className="flex items-center gap-1.5 text-[13px] font-medium text-ink-soft hover:text-ink"
+          >
+            <History className="h-3.5 w-3.5" strokeWidth={2} />
+            {showActivity ? 'Ocultar actividad reciente' : 'Ver entradas y salidas'}
+          </button>
+          {showActivity && (
+            <div className="mt-2 space-y-1.5 rounded-lg border border-line p-2.5 max-h-56 overflow-y-auto">
+              {sessions.length === 0 ? (
+                <p className="text-xs text-muted px-1 py-1">Todavía no hay actividad registrada.</p>
+              ) : (
+                sessions.map((s) => (
+                  <div key={s.id} className="flex items-center gap-2 text-[13px] px-1">
+                    {s.event === 'login' ? (
+                      <LogIn className="h-3.5 w-3.5 text-brand shrink-0" strokeWidth={2} />
+                    ) : (
+                      <LogOut className="h-3.5 w-3.5 text-muted shrink-0" strokeWidth={2} />
+                    )}
+                    <span className="font-medium truncate">{s.employeeName || 'Empleado'}</span>
+                    <span className="text-muted">{s.event === 'login' ? 'entró' : 'salió'}</span>
+                    <span className="ml-auto text-xs text-muted nums shrink-0">
+                      {new Date(s.createdAt).toLocaleString('es-AR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
       )}
 
