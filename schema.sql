@@ -613,7 +613,24 @@ create policy app_meta_select_public on public.app_meta for select using (true);
 -- gastos, compras) sólo las ve/edita el admin de ese tenant; el resto (venta,
 -- stock, fiado, caja) lo puede operar cualquier usuario logueado de ese
 -- tenant, porque el vendedor las necesita para vender.
+--
+-- Borramos TODAS las policies que ya existan en cada tabla (sea cual sea su
+-- nombre) antes de crear las nuevas — versiones viejas de este archivo (o el
+-- schema original, previo a este proyecto) pudieron haber dejado una policy
+-- con un nombre distinto al que este script asume, y "drop policy if exists
+-- <nombre-adivinado>" no la toca si el nombre real es otro: queda abierta
+-- para siempre aunque se vuelva a correr el schema. Ver public._drop_all_policies.
 -- ============================================================================
+create or replace function public._drop_all_policies(p_table text)
+returns void language plpgsql as $$
+declare pol record;
+begin
+  for pol in select policyname from pg_policies where schemaname = 'public' and tablename = p_table loop
+    execute format('drop policy %I on public.%I;', pol.policyname, p_table);
+  end loop;
+end;
+$$;
+
 do $$
 declare t text;
 begin
@@ -624,8 +641,7 @@ begin
   ]
   loop
     execute format('alter table public.%I enable row level security;', t);
-    execute format('drop policy if exists "anon_all_%1$s" on public.%1$I;', t);
-    execute format('drop policy if exists "auth_all_%1$s" on public.%1$I;', t);
+    perform public._drop_all_policies(t);
     execute format(
       'create policy "auth_all_%1$s" on public.%1$I for all using (auth.uid() is not null and "tenantId" = public.current_tenant_id()) with check (auth.uid() is not null and "tenantId" = public.current_tenant_id());',
       t
@@ -636,8 +652,7 @@ begin
   foreach t in array array['suppliers','supplier_payments','expenses','purchases']
   loop
     execute format('alter table public.%I enable row level security;', t);
-    execute format('drop policy if exists "anon_all_%1$s" on public.%1$I;', t);
-    execute format('drop policy if exists "admin_all_%1$s" on public.%1$I;', t);
+    perform public._drop_all_policies(t);
     execute format(
       'create policy "admin_all_%1$s" on public.%1$I for all using (public.is_admin() and "tenantId" = public.current_tenant_id()) with check (public.is_admin() and "tenantId" = public.current_tenant_id());',
       t
@@ -648,11 +663,7 @@ end $$;
 -- products: cualquier logueado del tenant puede ver/vender; sólo el admin
 -- de ese tenant da de alta, edita o cambia precios/costos.
 alter table public.products enable row level security;
-drop policy if exists "anon_all_products" on public.products;
-drop policy if exists products_select on public.products;
-drop policy if exists products_write on public.products;
-drop policy if exists products_update on public.products;
-drop policy if exists products_delete on public.products;
+select public._drop_all_policies('products');
 create policy products_select on public.products for select
   using (auth.uid() is not null and "tenantId" = public.current_tenant_id());
 create policy products_write on public.products for insert
