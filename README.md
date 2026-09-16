@@ -3,7 +3,7 @@
 Gestor de **inventario y ventas para kioscos**: punto de venta rápido con escáner de
 código de barras, control de stock, cuentas corrientes (fiado), caja/arqueo y reportes.
 
-**En producción:** https://kioscocontrol.vercel.app (PWA — se puede "instalar" en el celular).
+**En producción:** https://kiosco.frankiadevs.com (PWA — se puede "instalar" en el celular).
 
 Funciona en **dos modos**:
 
@@ -86,19 +86,22 @@ varios negocios distintos, cada uno viendo sólo sus propios productos, ventas,
 clientes, etc. Cada dispositivo "recuerda" a qué kiosco pertenece (guardado en
 el navegador); por defecto es el kiosco original, sin nada que configurar.
 
-**Alta de un kiosco nuevo — el dueño se registra solo** (camino normal): en la
-pantalla de login, "¿No tenés cuenta? Creá tu kiosco" — pone el nombre de su
-negocio, elige un código único, y su email/contraseña reales. Queda como
-administrador de un negocio nuevo, aislado del resto, sin que vos tengas que
-hacer nada ni ver su contraseña.
+**Alta de un kiosco nuevo — vos sos el único que la puede hacer**:
 
-**Alternativa — vos reservás el código de antemano** (por si querés avisarle
-a alguien con un link/código ya armado): abrí [`onboard-tenant.sql`](onboard-tenant.sql),
-completá el slug y el nombre, y corré ese `insert` en el SQL Editor. El dueño
-igual se activa su propio PIN de administrador desde la app (toca **"¿Es otro
-kiosco? Cambiar"**, pone el código, y en Configuración activa su PIN) — esta
-vía es sólo para el kiosco original de este proyecto o si preferís PIN en vez
-de email+contraseña para ese negocio en particular.
+1. Abrí [`onboard-tenant.sql`](onboard-tenant.sql), completá el slug y el
+   nombre del negocio, y corrélo en el SQL Editor de Supabase. Es un solo
+   `insert` — no hace falta crear ninguna cuenta a mano.
+2. Pasále al dueño el link de la app y ese código. En la pantalla de login
+   toca **"¿Te dieron un código? Activá tu kiosco"**, pone el código, su
+   email real y una contraseña. Queda como administrador de ESE negocio,
+   aislado del resto — vos nunca ves ni elegís su contraseña, pero tampoco
+   puede inventarse un código: si no coincide con uno que vos hayas creado,
+   o ese kiosco ya tiene administrador, la app lo rechaza.
+
+Si en cambio el dueño prefiere entrar con PIN en vez de email+contraseña
+(como el kiosco original de este proyecto), usá **"¿Es otro kiosco?
+Cambiar"** para apuntar el dispositivo a ese código y activá el PIN desde
+Configuración, en vez del paso 2 de arriba.
 
 Los datos de cada negocio están completamente aislados a nivel de base de
 datos (no es sólo un filtro en la interfaz): las políticas RLS de
@@ -158,9 +161,10 @@ escribir datos de otro kiosco.
 - Exportación a CSV e impresión.
 
 ### Roles (Configuración)
-- **Administrador**: ve todo. En modo Supabase se registra con **su email y
-  contraseña reales** (botón "¿No tenés cuenta? Creá tu kiosco" en la pantalla
-  de login) o —para el kiosco original de este proyecto— con un PIN. Con
+- **Administrador**: ve todo. En modo Supabase activa su cuenta con **su email
+  y contraseña reales** (botón "¿Te dieron un código? Activá tu kiosco" en la
+  pantalla de login, usando el código que le dio quien administra la
+  plataforma) o —para el kiosco original de este proyecto— con un PIN. Con
   sesión iniciada, siempre pide login al volver a abrir la app.
 - **Empleados**: el admin los da de alta desde **Configuración → Empleados**
   (nombre + PIN); cada uno entra sólo con su PIN, nunca con email. Por
@@ -186,7 +190,7 @@ escribir datos de otro kiosco.
   seguir vendiendo — cada venta hecha sin señal queda guardada en el
   dispositivo y se sincroniza sola apenas vuelve la conexión (banner arriba
   con el conteo de ventas pendientes; también hay un botón "Reintentar").
-- **Modo demo**: `https://kioscocontrol.vercel.app/?demo=1` abre la app en
+- **Modo demo**: `https://kiosco.frankiadevs.com/?demo=1` abre la app en
   modo local con catálogo de ejemplo, sin pedir PIN y arrancando de cero cada
   vez que se abre — para mostrarla a alguien sin tocar los datos reales de
   ningún kiosco. No usar ese link en un equipo que ya tenga datos reales
